@@ -145,6 +145,80 @@ fn info_rejects_non_hive_input() {
     );
 }
 
+#[test]
+fn info_emits_valid_json_in_json_mode() {
+    let bin = binary_path();
+    assert_binary_exists(&bin);
+
+    let hive = test_hive_path();
+    assert!(hive.is_file());
+
+    let output = Command::new(&bin)
+        .arg("info")
+        .arg("-f")
+        .arg("json")
+        .arg(&hive)
+        .output()
+        .expect("failed to spawn rosregview");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "rosregview info -f json exited non-zero (status={:?}). stderr:\n{}\nstdout:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+        stdout,
+    );
+
+    // The output must be strictly valid JSON (serde_json is strict).
+    let value: serde_json::Value =
+        serde_json::from_str(&stdout).expect("info -f json output must be valid JSON");
+
+    // Spot-check the documented shape. Future formats (tree/list) reuse the
+    // same Stats base contract, so this gives forward-compatibility assurance.
+    let obj = value.as_object().expect("expected JSON object at top level");
+    for required in ["path", "file_size_bytes", "root_subkey_count", "minor_version_known"] {
+        assert!(
+            obj.contains_key(required),
+            "JSON payload missing key `{required}`; got keys: {:?}",
+            obj.keys().collect::<Vec<_>>(),
+        );
+    }
+
+    // Sanity-checks against the testhive fixture (159744 bytes, 5 root subkeys).
+    assert_eq!(obj["file_size_bytes"].as_u64(), Some(159744));
+    assert_eq!(obj["root_subkey_count"].as_u64(), Some(5));
+    assert_eq!(obj["minor_version_known"].as_bool(), Some(false));
+}
+
+#[test]
+fn info_rejects_unknown_format() {
+    let bin = binary_path();
+    assert_binary_exists(&bin);
+
+    let hive = test_hive_path();
+    assert!(hive.is_file());
+
+    let output = Command::new(&bin)
+        .arg("info")
+        .arg("--format=xml")
+        .arg(&hive)
+        .output()
+        .expect("failed to spawn rosregview");
+
+    assert!(
+        !output.status.success(),
+        "rosregview must reject an unknown output format",
+    );
+    // clap's own error message — exit code 2 typically.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("xml") || output.status.code() == Some(2),
+        "expected clap-style format error; got status={:?} stderr={stderr:?}",
+        output.status.code(),
+    );
+}
+
 /// Pick a safe temp path; skip the test if we cannot create one rather than
 /// failing spuriously on platforms where `/tmp` is read-only.
 fn tempfile_or_skip() -> PathBuf {
