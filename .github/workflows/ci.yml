@@ -89,12 +89,16 @@ jobs:
 
       - name: Install Zig and cargo-zigbuild
         env:
+          # NOTE: zig 0.16 ships via `zig-x86_64-linux-<ver>.tar.xz`
+          # (NOT `zig-linux-x86_64-<ver>.tar.xz`); see
+          # https://ziglang.org/download/index.json for the current matrix.
           ZIG_VERSION: "0.16.0"
         run: |
           set -euxo pipefail
-          wget -qO- "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" \
+          curl -fsSL \
+            "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" \
             | tar -xJ
-          echo "zig-linux-x86_64-${ZIG_VERSION}" >> "$GITHUB_PATH"
+          echo "zig-x86_64-linux-${ZIG_VERSION}" >> "$GITHUB_PATH"
           cargo install cargo-zigbuild --locked
 
       - name: Cross-compile
