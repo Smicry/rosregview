@@ -46,13 +46,15 @@ jobs:
       - name: Build
         run: cargo build --${{ matrix.profile }} --locked --verbose
 
-      - name: Smoke run (info subcommand)
-        run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            ./target/${{ matrix.profile }}/rosregview.exe info testdata/testhive
-          else
-            ./target/${{ matrix.profile }}/rosregview info testdata/testhive
-          fi
+      - name: Smoke run (info subcommand) [Windows]
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: ./target/${{ matrix.profile }}/rosregview.exe info testdata/testhive
+
+      - name: Smoke run (info subcommand) [Unix]
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: ./target/${{ matrix.profile }}/rosregview info testdata/testhive
 
       - name: Integration tests
         run: cargo test --${{ matrix.profile }} --test integration --locked --verbose
