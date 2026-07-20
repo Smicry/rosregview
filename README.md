@@ -12,7 +12,7 @@ and Windows. GPL-2.0-or-later to match ReactOS.
 
 ## Status
 
-**Phase 2 complete.** All four planned subcommands implemented
+**Phase 2 complete.** All planned subcommands implemented
 (`info`, `tree`, `list`, `show`, `find`) with shared `-f json`
 output. Ready for review against the ReactOS tree (collab) — letter
 to the maintainer sent, awaiting reply.
@@ -188,13 +188,15 @@ cargo zigbuild --release --target i686-pc-windows-gnu
 cargo test
 ```
 
-Sixteen integration tests cover: happy-path parsing on the bundled
+Twenty integration tests cover: happy-path parsing on the bundled
 `testdata/testhive` fixture (from the `nt-hive` project), three error
 paths (missing file / non-hive / unknown output format), JSON shape
 for each subcommand, `--depth N` correctness, multi-level `KEY_PATH`
 descent, UTF-16 surrogate names round-tripping, all nine tested
-REG_* types, and a `PE32` header check on the cross-compiled `.exe`
-that skips cleanly when the artifact is absent.
+REG_* types, `find` name+value substring matching (both
+case-insensitive default and hex/decimal data previews), and a `PE32`
+header check on the cross-compiled `.exe` that skips cleanly when the
+artifact is absent.
 
 CI runs natively on Linux, macOS, and Windows, plus the
 `cargo-zigbuild` cross compile.

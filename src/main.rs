@@ -149,7 +149,11 @@ impl fmt::Display for OutputFormat {
     }
 }
 
-/// Per-hive overview facts (file size, root size, ...).
+/// File-level (hive-wide) facts that every subcommand's JSON output shares
+/// under the same top-level keys (`path`, `file_size_bytes`,
+/// `parsed_ok`, `minor_version_known`). Subcommand-specific shape
+/// (subkey count for `info`, recursive tree for `tree`, etc.) is layered
+/// on top via `#[serde(flatten)]` in each `*Stats` wrapper.
 #[derive(Debug, Serialize)]
 struct Stats {
     /// Absolute or user-supplied path the hive was loaded from.
@@ -827,21 +831,33 @@ fn render_show_json(stats: &ShowStats) -> Result<()> {
 // find
 // ----------------------------------------------------------------------
 
-/// Substring patterns supplied to `find`. Both the `name` and `value`
-/// patterns are substring matches (any-of for `name`, single for
-/// `value`).
+/// Find-command filter state.
 ///
-/// Matching strategy is intentionally narrow in v1:
-///   * Plain substring, no regex (avoids pulling in the `regex` crate
-///     and the compile-once surface complexity it brings);
-///   * Case sensitivity is a single global flag — per-pattern flags
-///     would be ergonomic sugar but add API surface without buying
-///     much for a CLI;
-///   * REG_BINARY / REG_NONE / REG_RESOURCE_* values are matched
-///     against their **stringified hex dump** (the same text you'd
-///     see in `show`'s human output) rather than their raw bytes. This
-///     is good enough for typical searches and keeps the walker
-///     allocation-light.
+/// Compound OR semantics across both lists:
+///   * `name` is a list of substring patterns (any-of match): if any
+///     pattern passes, the key's name filter passes.
+///   * `value` is at most a single substring pattern that is matched
+///     against the value's name AND its stringified data preview
+///     (the same text `show` renders).
+///
+/// A key is collected iff its **name filter** passes OR at least one of
+/// its **values** passes the value filter. With both lists empty
+/// (default), every key passes.
+///
+/// Why this shape instead of regex:
+///   * Plain substring avoids pulling in the `regex` crate just so
+///     users can write `displayname=*driver*`.
+///   * Single global `case_sensitive` flag is enough for the 95% case.
+///   * Per-pattern flags would be ergonomic sugar but add API surface
+///     without buying much for a CLI.
+///
+/// Why match values against the *stringified* preview, not raw bytes:
+///   * `show`'s `format_value_data` already does the type-aware decode.
+///     Reusing it lets `find -v 42` find both the decimal and the hex
+///     representation of a REG_DWORD.
+///   * Searching REG_BINARY bytes directly is not supported — users who
+///     need that can pipe `find -f json` into `jq` to filter on the
+///     `matched_values[*].preview` field.
 #[derive(Debug, Clone, Default, Serialize)]
 struct FindPatterns {
     name: Vec<String>,
