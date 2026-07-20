@@ -1,5 +1,8 @@
 //! rosregview — Offline Windows registry hive viewer for ReactOS.
 //!
+//! Branch-protection smoke-test marker (this commit deliberately does
+//! not change behavior; only the module-level doc grows a paragraph).
+//!
 //! See `Cargo.toml` for project metadata, and `rosregview-plan.md` in the
 //! repository root for the wider plan and design notes.
 //!
