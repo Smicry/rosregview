@@ -219,6 +219,166 @@ fn info_rejects_unknown_format() {
     );
 }
 
+// ----------------------------------------------------------------------
+// tree subcommand
+// ----------------------------------------------------------------------
+
+#[test]
+fn tree_lists_subkeys_in_human_mode() {
+    let bin = binary_path();
+    assert_binary_exists(&bin);
+
+    let hive = test_hive_path();
+    assert!(hive.is_file());
+
+    let output = Command::new(&bin)
+        .arg("tree")
+        .arg(&hive)
+        .output()
+        .expect("failed to spawn rosregview");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        output.status.success(),
+        "rosregview tree exited non-zero. stderr:\n{}\nstdout:\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        stdout,
+    );
+
+    // Header
+    assert!(stdout.contains("File:"), "missing `File:` header in stdout:\n{stdout}");
+    assert!(stdout.contains("Size:"));
+    assert!(stdout.contains("Depth:"));
+    assert!(
+        stdout.contains("<root>"),
+        "expected `<root>` line for the hive root, got:\n{stdout}",
+    );
+
+    // Some known subkeys visible in testdata/testhive.
+    for expected in ["subkey-test", "character-encoding-test", "data-test"] {
+        assert!(
+            stdout.contains(expected),
+            "expected subkey `{expected}` in tree output, got:\n{stdout}",
+        );
+    }
+
+    // UTF-8 names through UTF-16: `character-encoding-test` contains
+    // `äöü` (Latin-1 chars test) and `𐐐` (Deseret, surrogate pair in UTF-16).
+    assert!(
+        stdout.contains("äöü"),
+        "expected UTF-8 lossy conversion of `äöü`, got:\n{stdout}",
+    );
+    assert!(
+        stdout.contains("𐐐"),
+        "expected UTF-8 lossy conversion of supplementary-plane BMP `𐐐`, got:\n{stdout}",
+    );
+}
+
+#[test]
+fn tree_respects_depth_limit() {
+    let bin = binary_path();
+    assert_binary_exists(&bin);
+
+    let hive = test_hive_path();
+    assert!(hive.is_file());
+
+    // Depth 1: root + direct children only. Their *children* must NOT appear.
+    let output = Command::new(&bin)
+        .arg("tree")
+        .arg("--depth=1")
+        .arg(&hive)
+        .output()
+        .expect("failed to spawn rosregview");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        output.status.success(),
+        "rosregview tree --depth=1 exited non-zero. stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    // The direct children are visible.
+    assert!(stdout.contains("subkey-test"));
+    // The grand-child keys (e.g. `Key0`, `key1`) under `subkey-test` are NOT visible.
+    assert!(
+        !stdout.contains("Key0\n") && !stdout.contains("  Key0"),
+        "expected grandchild `Key0` to be pruned at depth=1, got:\n{stdout}",
+    );
+    // `äöü` lives under `character-encoding-test` at depth 2 — must also be pruned.
+    assert!(
+        !stdout.contains("äöü"),
+        "expected deep unicode key to be pruned at depth=1, got:\n{stdout}",
+    );
+
+    // Depth 0: only the root, no children.
+    let output = Command::new(&bin)
+        .arg("tree")
+        .arg("--depth=0")
+        .arg(&hive)
+        .output()
+        .expect("failed to spawn rosregview");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "rosregview tree --depth=0 exited non-zero. stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(stdout.contains("<root>"));
+    assert!(
+        !stdout.contains("subkey-test"),
+        "depth=0 must show only the root, got:\n{stdout}",
+    );
+}
+
+#[test]
+fn tree_emits_well_formed_json_with_recursive_subkeys() {
+    let bin = binary_path();
+    assert_binary_exists(&bin);
+
+    let hive = test_hive_path();
+    assert!(hive.is_file());
+
+    let output = Command::new(&bin)
+        .arg("tree")
+        .arg("-f")
+        .arg("json")
+        .arg(&hive)
+        .output()
+        .expect("failed to spawn rosregview");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "rosregview tree -f json failed: stderr={}\nstdout={stdout}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let value: serde_json::Value =
+        serde_json::from_str(&stdout).expect("tree JSON output must be valid JSON");
+
+    let obj = value.as_object().expect("top-level JSON should be an object");
+    for required in ["path", "file_size_bytes", "parsed_ok", "depth_limit", "tree"] {
+        assert!(
+            obj.contains_key(required),
+            "JSON payload missing `{required}`",
+        );
+    }
+    // `null` depth_limit means unlimited.
+    assert_eq!(obj["depth_limit"], serde_json::Value::Null);
+
+    // Recursive shape: `tree` is an object with `name` + `subkeys` (array).
+    let tree = &obj["tree"];
+    assert_eq!(tree["name"].as_str(), Some("<root>"));
+    let subs = tree["subkeys"].as_array().expect("subkeys must be array");
+    assert!(
+        !subs.is_empty(),
+        "testhive has 5 root subkeys; got empty subkeys array",
+    );
+}
+
 /// Pick a safe temp path; skip the test if we cannot create one rather than
 /// failing spuriously on platforms where `/tmp` is read-only.
 fn tempfile_or_skip() -> PathBuf {
