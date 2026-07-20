@@ -6,9 +6,9 @@
 //! Subcommands currently implemented:
 //!   * `info <hive>`                  — overview + JSON via `-f json`
 //!   * `tree <hive> [--depth N]`      — recursive key tree, also JSON
+//!   * `list <hive> [PATH]`           — direct children at PATH, also JSON
 //!
-//! Additional subcommands (`list`, `show`, `find`) will land in
-//! subsequent commits and reuse the same `Stats` data flow.
+//! Additional subcommands (`show`, `find`) will land in subsequent commits.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -50,6 +50,24 @@ enum Command {
         depth: Option<usize>,
 
         /// Output format (`human` is the indented text tree, `json` is machine-readable).
+        #[arg(short = 'f', long = "format", value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+    },
+
+    /// List the direct subkeys of a key (default: the root), with subkey and
+    /// value counts. The optional `KEY_PATH` may be a single segment
+    /// (`ControlSet001`) or a backslash-separated subpath (`A\B\C`). Empty
+    /// path == the root.
+    List {
+        /// Path to a .hiv file (Windows registry configuration unit).
+        path: PathBuf,
+
+        /// Optional key path inside the hive. Use `\` (escaped as `\\` in
+        /// most shells) to separate levels. Empty/missing → hive root.
+        #[arg(value_name = "KEY_PATH")]
+        key_path: Option<String>,
+
+        /// Output format (`human` is an aligned table, `json` is machine-readable).
         #[arg(short = 'f', long = "format", value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
     },
@@ -117,6 +135,7 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Info { path, format } => info_command(&path, format),
         Command::Tree { path, depth, format } => tree_command(&path, depth, format),
+        Command::List { path, key_path, format } => list_command(&path, key_path.as_deref(), format),
     }
 }
 
@@ -216,7 +235,7 @@ fn tree_command(path: &Path, depth: Option<usize>, format: OutputFormat) -> Resu
 /// at depth `n` (i.e. n=0 means show only the root, n=1 means root + direct
 /// children, ...). `current_depth` is the depth of `node` itself.
 fn build_tree<'a>(
-    node: &nt_hive::KeyNode<'a, &[u8]>,
+    node: &nt_hive::KeyNode<'a, &'a [u8]>,
     name: &str,
     depth_limit: Option<usize>,
     current_depth: usize,
@@ -272,6 +291,171 @@ fn print_tree_node(node: &KeyTreeNode, depth: usize) {
 }
 
 fn render_tree_json(stats: &TreeStats) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(stats)?);
+    Ok(())
+}
+
+// ----------------------------------------------------------------------
+// list
+// ----------------------------------------------------------------------
+
+/// A single subkey entry: name + subkey count + value count.
+#[derive(Debug, Serialize)]
+struct ListEntry {
+    name: String,
+    subkey_count: usize,
+    value_count: usize,
+}
+
+/// Payload for the `list` subcommand.
+#[derive(Debug, Serialize)]
+struct ListStats {
+    #[serde(flatten)]
+    base: Stats,
+    /// Where in the hive we listed from. `"<root>"` for the hive root,
+    /// otherwise the user-supplied `KEY_PATH`.
+    at: String,
+    entries: Vec<ListEntry>,
+    total_entries: usize,
+}
+
+fn list_command(path: &Path, key_path: Option<&str>, format: OutputFormat) -> Result<()> {
+    let bytes = std::fs::read(path)
+        .with_context(|| format!("failed to read hive file `{}`", path.display()))?;
+    let hive = Hive::new(bytes.as_slice()).context("input is not a valid Windows registry hive")?;
+    let root = hive
+        .root_key_node()
+        .context("hive has no root key node")?;
+
+    // Resolve the target KeyNode from `key_path`. None / empty / "."  → root.
+    let target = match key_path {
+        None | Some("") | Some(".") => root,
+        Some(p) => find_subpath(&root, p)?,
+    };
+    let target_name: &str = match key_path {
+        None | Some("") | Some(".") => "<root>",
+        Some(p) => p,
+    };
+
+    let entries = list_entries(&target)?;
+
+    let stats = ListStats {
+        base: Stats {
+            path: path.display().to_string(),
+            file_size_bytes: std::fs::metadata(path)
+                .context("failed to stat hive file")?
+                .len(),
+            parsed_ok: true,
+            minor_version_known: false,
+        },
+        at: target_name.to_string(),
+        total_entries: entries.len(),
+        entries,
+    };
+
+    match format {
+        OutputFormat::Human => render_list_human(&stats),
+        OutputFormat::Json => render_list_json(&stats),
+    }
+}
+
+/// Locate a subkey under `root` given a backslash-separated path. Returns
+/// the `KeyNode` at the end of the path, or an error if no such path exists
+/// in the hive.
+///
+/// We rely on `nt_hive::KeyNode::subpath` which performs the descent
+/// internally — no manual segment traversal on our side.
+fn find_subpath<'a>(
+    root: &nt_hive::KeyNode<'a, &'a [u8]>,
+    key_path: &str,
+) -> Result<nt_hive::KeyNode<'a, &'a [u8]>> {
+    let segments: Vec<&str> = key_path.split('\\').filter(|s| !s.is_empty()).collect();
+
+    match root.subpath(key_path) {
+        Some(Ok(node)) => Ok(node),
+        Some(Err(e)) => Err(anyhow::Error::new(e)
+            .context(format!("failed to parse subpath `{}`", key_path))),
+        None => Err(anyhow::anyhow!(
+            "no such key path `{}` (segments: {})",
+            key_path,
+            segments.join(" / ")
+        )),
+    }
+}
+
+/// Collect the direct children of `target` along with their per-child
+/// `subkey_count` and `value_count`. Counts are best-effort: a malformed
+/// subkey index or value list is logged and counted as 0 rather than
+/// aborting the whole listing.
+fn list_entries<'a>(
+    target: &nt_hive::KeyNode<'a, &'a [u8]>,
+) -> Result<Vec<ListEntry>> {
+    let children = match target.subkeys() {
+        Some(Ok(iter)) => iter,
+        Some(Err(e)) => return Err(anyhow::Error::new(e).context("malformed subkey index")),
+        None => return Ok(Vec::new()),
+    };
+
+    let mut out = Vec::new();
+    for child_result in children {
+        let child = child_result
+            .map_err(|e| anyhow::Error::new(e).context("failed to advance subkey iterator"))?;
+        let name = child
+            .name()
+            .map_err(|e| anyhow::Error::new(e).context("failed to read subkey name"))?
+            .to_string_lossy();
+
+        let subkey_count = match child.subkeys() {
+            Some(Ok(iter)) => iter.count(),
+            _ => 0,
+        };
+        let value_count = match child.values() {
+            Some(Ok(iter)) => iter.count(),
+            _ => 0,
+        };
+
+        out.push(ListEntry {
+            name,
+            subkey_count,
+            value_count,
+        });
+    }
+    Ok(out)
+}
+
+fn render_list_human(stats: &ListStats) -> Result<()> {
+    println!("File:    {}", stats.base.path);
+    println!("At:      {}", stats.at);
+    println!();
+
+    // Use a fixed-width header for predictability across hive shapes.
+    println!("{:<40}  {:>8}  {:>8}", "Name", "Subkeys", "Values");
+    println!("{}", "─".repeat(60));
+    for entry in &stats.entries {
+        // Truncate over-long names with a trailing `…` to keep alignment.
+        let display_name = truncate_with_ellipsis(&entry.name, 40);
+        println!(
+            "{:<40}  {:>8}  {:>8}",
+            display_name, entry.subkey_count, entry.value_count
+        );
+    }
+    println!();
+    println!("Total: {} keys", stats.total_entries);
+    Ok(())
+}
+
+fn truncate_with_ellipsis(s: &str, max_chars: usize) -> String {
+    let count = s.chars().count();
+    if count <= max_chars {
+        s.to_string()
+    } else {
+        let keep = max_chars.saturating_sub(1);
+        let truncated: String = s.chars().take(keep).collect();
+        format!("{truncated}…")
+    }
+}
+
+fn render_list_json(stats: &ListStats) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(stats)?);
     Ok(())
 }

@@ -379,6 +379,168 @@ fn tree_emits_well_formed_json_with_recursive_subkeys() {
     );
 }
 
+// ----------------------------------------------------------------------
+// list subcommand
+// ----------------------------------------------------------------------
+
+#[test]
+fn list_default_lists_root_subkeys() {
+    let bin = binary_path();
+    assert_binary_exists(&bin);
+
+    let hive = test_hive_path();
+    let output = Command::new(&bin)
+        .arg("list")
+        .arg(&hive)
+        .output()
+        .expect("failed to spawn rosregview");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "rosregview list failed. stderr={}\nstdout={stdout}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    // The default target is the hive root.
+    assert!(stdout.contains("At:      <root>"));
+    // Headers
+    assert!(stdout.contains("Subkeys"));
+    assert!(stdout.contains("Values"));
+    assert!(stdout.contains("Total:"));
+
+    // All five root-level subkeys must be present in the table.
+    for expected in [
+        "big-data-test",
+        "character-encoding-test",
+        "data-test",
+        "subkey-test",
+        "subpath-test",
+    ] {
+        assert!(
+            stdout.contains(expected),
+            "expected root subkey `{expected}` in list output:\n{stdout}",
+        );
+    }
+
+    // Total line should match the count we know (5).
+    assert!(
+        stdout.contains("Total: 5 keys"),
+        "expected `Total: 5 keys` in list output:\n{stdout}",
+    );
+}
+
+#[test]
+fn list_with_key_path_descends_one_level() {
+    let bin = binary_path();
+    assert_binary_exists(&bin);
+
+    let hive = test_hive_path();
+    let output = Command::new(&bin)
+        .arg("list")
+        .arg(&hive)
+        .arg("subkey-test")
+        .output()
+        .expect("failed to spawn rosregview");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "rosregview list subkey-test failed. stderr={}\nstdout={stdout}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    // The "At:" line should reflect the user-supplied path.
+    assert!(
+        stdout.contains("At:      subkey-test"),
+        "expected `At: subkey-test`, got:\n{stdout}",
+    );
+    // The 512-sibling count seen in the previous test must NOT appear
+    // here (we deliberately descended into `subkey-test`).
+    assert!(
+        !stdout.contains("subkey-test                              512"),
+        "list subkey-test should not list itself as a row again",
+    );
+    // Children of `subkey-test` start at index 0 — at least one must appear.
+    assert!(
+        stdout.contains("Key0"),
+        "expected `Key0` from subkey-test children in output:\n{stdout}",
+    );
+}
+
+#[test]
+fn list_emits_well_formed_json_with_entries() {
+    let bin = binary_path();
+    assert_binary_exists(&bin);
+
+    let hive = test_hive_path();
+    let output = Command::new(&bin)
+        .arg("list")
+        .arg("-f")
+        .arg("json")
+        .arg(&hive)
+        .arg("character-encoding-test")
+        .output()
+        .expect("failed to spawn rosregview");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "rosregview list -f json failed. stderr={}\nstdout={stdout}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let value: serde_json::Value =
+        serde_json::from_str(&stdout).expect("list JSON output must be valid JSON");
+
+    let obj = value.as_object().expect("top-level JSON should be an object");
+    for required in ["path", "at", "entries", "total_entries"] {
+        assert!(
+            obj.contains_key(required),
+            "list JSON missing `{required}`",
+        );
+    }
+    assert_eq!(obj["at"].as_str(), Some("character-encoding-test"));
+
+    // Entries must include the 4 known unicode keys via UTF-8 lossy.
+    let entries = obj["entries"].as_array().expect("entries must be array");
+    let names: Vec<String> = entries
+        .iter()
+        .map(|e| e["name"].as_str().unwrap().to_string())
+        .collect();
+    for expected in ["äöü", "𐐐", "𐐸", "Ａ"] {
+        assert!(
+            names.iter().any(|n| n == expected),
+            "expected entry name `{expected}` (UTF-8 lossy) in list JSON; got names = {names:?}",
+        );
+    }
+    assert_eq!(obj["total_entries"].as_u64(), Some(4));
+}
+
+#[test]
+fn list_fails_cleanly_on_unknown_path() {
+    let bin = binary_path();
+    assert_binary_exists(&bin);
+
+    let hive = test_hive_path();
+    let output = Command::new(&bin)
+        .arg("list")
+        .arg(&hive)
+        .arg("NoSuchKey")
+        .output()
+        .expect("failed to spawn rosregview");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "rosregview list on a nonexistent path must exit non-zero",
+    );
+    assert!(
+        stderr.contains("NoSuchKey") && stderr.contains("no such key path"),
+        "expected clean `no such key path ... NoSuchKey` error. stderr={stderr}",
+    );
+}
+
 /// Pick a safe temp path; skip the test if we cannot create one rather than
 /// failing spuriously on platforms where `/tmp` is read-only.
 fn tempfile_or_skip() -> PathBuf {
