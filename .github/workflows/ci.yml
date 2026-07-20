@@ -33,7 +33,7 @@ jobs:
           - os: windows-latest
             profile: release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust toolchain (stable)
         uses: dtolnay/rust-toolchain@stable
@@ -60,7 +60,7 @@ jobs:
         run: cargo test --${{ matrix.profile }} --test integration --locked --verbose
 
       - name: Upload native binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: rosregview-${{ matrix.os }}-${{ matrix.profile }}
           path: |
@@ -77,7 +77,7 @@ jobs:
     name: cross / i686-pc-windows-gnu (zigbuild)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust toolchain (stable) + i686 target
         uses: dtolnay/rust-toolchain@stable
@@ -121,7 +121,7 @@ jobs:
         run: cargo test --release --test integration windows_exe_artifact_is_valid_pe32_when_present -- --nocapture
 
       - name: Upload Windows .exe
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: rosregview-i686-pc-windows-gnu-${{ github.sha }}
           path: target/i686-pc-windows-gnu/release/rosregview.exe

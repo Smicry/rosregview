@@ -1,5 +1,9 @@
 # rosregview
 
+[![CI](https://github.com/Smicry/rosregview/actions/workflows/ci.yml/badge.svg)](https://github.com/Smicry/rosregview/actions/workflows/ci.yml)
+[![License: GPL-2.0-or-later](https://img.shields.io/badge/License-GPL--2.0--or--later-blue.svg)](LICENSE)
+[![Rust 1.94+](https://img.shields.io/badge/rust-1.94%2B-orange.svg)](https://www.rust-lang.org)
+
 Offline Windows registry hive viewer for ReactOS, written in Rust.
 
 **Status:** early development (Phase 1 — cross-compile smoke test).
