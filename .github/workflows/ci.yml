@@ -1,0 +1,114 @@
+name: ci
+
+on:
+  push:
+    branches: [master, feature/**]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+# Cancel in-flight runs on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ----------------------------------------------------------------------
+  # Native build + integration tests on the three primary platforms.
+  # ----------------------------------------------------------------------
+  test:
+    name: native / ${{ matrix.os }} / ${{ matrix.profile }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            profile: release
+          - os: macos-latest
+            profile: release
+          - os: windows-latest
+            profile: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo target
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: false
+
+      - name: Build
+        run: cargo build --${{ matrix.profile }} --locked --verbose
+
+      - name: Smoke run (info subcommand)
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            ./target/${{ matrix.profile }}/rosregview.exe info testdata/testhive
+          else
+            ./target/${{ matrix.profile }}/rosregview info testdata/testhive
+          fi
+
+      - name: Integration tests
+        run: cargo test --${{ matrix.profile }} --test integration --locked --verbose
+
+      - name: Upload native binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: rosregview-${{ matrix.os }}-${{ matrix.profile }}
+          path: |
+            target/${{ matrix.profile }}/rosregview
+            target/${{ matrix.profile }}/rosregview.exe
+          if-no-files-found: ignore
+
+  # ----------------------------------------------------------------------
+  # Cross-compile i686-pc-windows-gnu via Zig. Lives on its own job so
+  # we can install the heavier zig + cargo-zigbuild toolchain once and
+  # not slow down the native matrix.
+  # ----------------------------------------------------------------------
+  cross-windows:
+    name: cross / i686-pc-windows-gnu (zigbuild)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (stable) + i686 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-pc-windows-gnu
+
+      - name: Cache cargo target
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: false
+
+      - name: Install Zig and cargo-zigbuild
+        env:
+          ZIG_VERSION: "0.16.0"
+        run: |
+          set -euxo pipefail
+          wget -qO- "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" \
+            | tar -xJ
+          echo "zig-linux-x86_64-${ZIG_VERSION}" >> "$GITHUB_PATH"
+          cargo install cargo-zigbuild --locked
+
+      - name: Cross-compile
+        run: cargo zigbuild --release --target i686-pc-windows-gnu --locked
+
+      - name: Validate PE32 header via the gated integration test
+        # The test inspects target/i686-pc-windows-gnu/release/rosregview.exe
+        # and asserts valid MZ + PE\0\0 + i386 machine + Windows CUI subsystem.
+        # We force `--release` here so the test looks in the release dir.
+        run: cargo test --release --test integration windows_exe_artifact_is_valid_pe32_when_present -- --nocapture
+
+      - name: Upload Windows .exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: rosregview-i686-pc-windows-gnu-${{ github.sha }}
+          path: target/i686-pc-windows-gnu/release/rosregview.exe
+          if-no-files-found: error
