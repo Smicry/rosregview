@@ -1,0 +1,32 @@
+[package]
+name = "rosregview"
+version = "0.1.0"
+edition = "2024"
+description = "Offline Windows registry hive viewer for ReactOS"
+license = "GPL-2.0-or-later"
+repository = "https://github.com/your-org/rosregview"
+readme = "README.md"
+keywords = ["reactos", "registry", "hive", "windows", "forensics"]
+categories = ["command-line-utilities", "parsing", "os-utilities"]
+publish = false
+
+[[bin]]
+name = "rosregview"
+path = "src/main.rs"
+
+[dependencies]
+nt-hive = "0.3"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+thiserror = "2"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+# A CLI tool that never sees foreign frames doesn't need unwinding.
+# This also sidesteps a known link-order mismatch between Rust's
+# emitted `panic_unwind` references and MinGW-w64 GCC 16's `libgcc_eh`
+# on the i686-pc-windows-gnu target (the Homebrew brew formula's
+# `libgcc_eh.a` is intentionally built without `_Unwind_Resume`).
+panic = "abort"
