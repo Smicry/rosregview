@@ -97,21 +97,21 @@ jobs:
           ZIG_VERSION: "0.16.0"
         run: |
           set -euxo pipefail
-          mkdir -p "$RUNNER_TEMP/zig"
           curl -fsSL \
             "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" \
-            | tar -xJ -C "$RUNNER_TEMP/zig"
-          test -x "$RUNNER_TEMP/zig/zig-x86_64-linux-${ZIG_VERSION}/zig"
+            | sudo tar -xJ -C /usr/local
+          sudo ln -sf \
+            "/usr/local/zig-x86_64-linux-${ZIG_VERSION}/zig" \
+            /usr/local/bin/zig
+          zig version
 
       - name: Install cargo-zigbuild
         run: cargo install cargo-zigbuild --locked
 
       - name: Cross-compile
-        env:
-          # cargo-zigbuild 0.23 locates zig as: $ZIG → $ZIG_PATH → `which zig`.
-          # PATH modifications made in earlier steps via $GITHUB_PATH did
-          # not reach the dlltool wrapper, so we pass an absolute path here.
-          ZIG: ${{ runner.temp }}/zig/zig-x86_64-linux-0.16.0/zig
+        # cargo-zigbuild 0.23 locates zig via `which zig` only — it has no
+        # $ZIG / $ZIG_PATH recognition. We therefore expose zig on PATH by
+        # symlinking into /usr/local/bin above, no env var needed here.
         run: cargo zigbuild --release --target i686-pc-windows-gnu --locked
 
       - name: Validate PE32 header via the gated integration test
