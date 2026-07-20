@@ -729,6 +729,234 @@ fn show_renders_big_binary_with_size_summary() {
     );
 }
 
+// ----------------------------------------------------------------------
+// find subcommand
+// ----------------------------------------------------------------------
+
+#[test]
+fn find_filters_subkeys_by_name_pattern_case_insensitive() {
+    let bin = binary_path();
+    assert_binary_exists(&bin);
+
+    let hive = test_hive_path();
+    // Without -n/-v filters and with `--max-depth 1`, find enumerates
+    // every key up to that depth.
+    let output = Command::new(&bin)
+        .arg("find")
+        .arg(&hive)
+        .arg("-n")
+        .arg("test")
+        .arg("--max-depth")
+        .arg("1")
+        .output()
+        .expect("failed to spawn rosregview");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "rosregview find -n test failed. stderr={}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    // Every key whose name contains "test" (case-insensitive by default)
+    // should appear in the output: that's 5 of the 5 root children.
+    for expected in [
+        "big-data-test",
+        "character-encoding-test",
+        "data-test",
+        "subkey-test",
+        "subpath-test",
+    ] {
+        assert!(
+            stdout.contains(expected),
+            "expected `{expected}` in find -n test (case-insensitive):\n{stdout}",
+        );
+    }
+    // The root `<root>` has no name, so it should NOT appear as a
+    // literal match for the substring "test".
+    assert!(
+        !stdout.lines().any(|l| l.trim() == "<root>"),
+        "root pseudo-name shouldn't match a substring filter:\n{stdout}",
+    );
+}
+
+#[test]
+fn find_filters_by_decoded_value_data() {
+    let bin = binary_path();
+    assert_binary_exists(&bin);
+
+    let hive = test_hive_path();
+    // The data-test key has a REG_DWORD with value 42 (and hex 0x0000002a).
+    // Both substrings must hit `data-test`.
+    let dword = Command::new(&bin)
+        .arg("find")
+        .arg(&hive)
+        .arg("-v")
+        .arg("42")
+        .arg("--max-depth")
+        .arg("2")
+        .output()
+        .expect("failed to spawn rosregview");
+
+    let stdout_d = String::from_utf8_lossy(&dword.stdout);
+    assert!(
+        dword.status.success(),
+        "rosregview find -v 42 failed. stderr={}",
+        String::from_utf8_lossy(&dword.stderr),
+    );
+    assert!(
+        stdout_d.contains("data-test"),
+        "expected `data-test` in find -v 42 output:\n{stdout_d}",
+    );
+    assert!(
+        stdout_d.contains("dword"),
+        "expected matched value name `dword` (matches via data substring):\n{stdout_d}",
+    );
+    // The bullet under data-test should show the REG_DWORD with the
+    // preview text.
+    assert!(
+        stdout_d.contains("REG_DWORD"),
+        "expected `REG_DWORD` in matched_values preview:\n{stdout_d}",
+    );
+    // `reg-sz` matches via decoded value data (substring "42" appears in
+    // "reg-multi-sz-big" as a 0+1+2+3+4+5+...+n-th digit, but it's also
+    // more obviously a substring of MULTI_SZ "multi-sz-test" when
+    // joined with delimiter. We don't assert the precise match here;
+    // only that data-test shows up at all (asserted above).
+
+    // Hex form should also be matched: "0x2a".
+    let hex = Command::new(&bin)
+        .arg("find")
+        .arg(&hive)
+        .arg("-v")
+        .arg("0x2a")
+        .arg("--max-depth")
+        .arg("2")
+        .output()
+        .expect("failed to spawn rosregview");
+    let stdout_h = String::from_utf8_lossy(&hex.stdout);
+    assert!(
+        hex.status.success(),
+        "rosregview find -v 0x2a failed. stderr={}",
+        String::from_utf8_lossy(&hex.stderr),
+    );
+    // 0x2a substring matches `0x0000002a`. data-test row should still appear.
+    assert!(
+        stdout_h.contains("data-test"),
+        "expected `data-test` in find -v 0x2a output:\n{stdout_h}",
+    );
+}
+
+#[test]
+fn find_emits_well_formed_json_matches() {
+    let bin = binary_path();
+    assert_binary_exists(&bin);
+
+    let hive = test_hive_path();
+    let output = Command::new(&bin)
+        .arg("find")
+        .arg("-f")
+        .arg("json")
+        .arg(&hive)
+        .arg("-n")
+        .arg("data-test")
+        .arg("--max-depth")
+        .arg("2")
+        .output()
+        .expect("failed to spawn rosregview");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "rosregview find -f json failed. stderr={}\nstdout={stdout}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let value: serde_json::Value =
+        serde_json::from_str(&stdout).expect("find JSON output must be valid JSON");
+
+    let obj = value.as_object().expect("find JSON should be a top-level object");
+    for required in ["path", "patterns", "max_depth", "matches", "total_keys"] {
+        assert!(
+            obj.contains_key(required),
+            "find JSON missing `{required}`",
+        );
+    }
+    // `-n data-test --max-depth 2` is a SUBSTRING match (case-insensitive),
+    // so both `data-test` and `big-data-test` qualify. Assert that the
+    // matches are coherent JSON objects rather than pinning the exact
+    // count, since future fixtures may add or remove root children.
+    let matches = obj["matches"]
+        .as_array()
+        .expect("matches must be an array");
+    assert!(
+        !matches.is_empty(),
+        "expected at least one match for `-n data-test`; got: {}",
+        serde_json::to_string_pretty(&matches).unwrap_or_default(),
+    );
+    // data-test is one of the matches.
+    let data_test_match = matches
+        .iter()
+        .find(|m| m["key_path"].as_str() == Some("data-test"))
+        .expect("data-test should appear among the matches");
+    assert_eq!(data_test_match["depth"].as_u64(), Some(1));
+    assert!(
+        data_test_match["matched_values"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "-n only filter must produce empty matched_values array",
+    );
+
+    // patterns echo back what we asked for.
+    assert_eq!(obj["patterns"]["case_sensitive"].as_bool(), Some(false));
+    let names = obj["patterns"]["name"].as_array().expect("patterns.name must be array");
+    assert_eq!(names.len(), 1);
+    assert_eq!(names[0].as_str(), Some("data-test"));
+    assert_eq!(obj["patterns"]["value"], serde_json::Value::Null);
+}
+
+#[test]
+fn find_with_no_filter_enumerates_bounded_by_depth() {
+    let bin = binary_path();
+    assert_binary_exists(&bin);
+
+    let hive = test_hive_path();
+    let output = Command::new(&bin)
+        .arg("find")
+        .arg(&hive)
+        .arg("--max-depth")
+        .arg("1")
+        .output()
+        .expect("failed to spawn rosregview");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "rosregview find (no filter) failed. stderr={}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    // Depth-0 root + depth-1 children = 1 + 5 = 6 keys.
+    assert!(
+        stdout.contains("matched 6 key"),
+        "expected `matched 6 key(s)` (root + 5 children); got:\n{stdout}",
+    );
+    // Every root child appears.
+    for expected in [
+        "big-data-test",
+        "character-encoding-test",
+        "data-test",
+        "subkey-test",
+        "subpath-test",
+    ] {
+        assert!(
+            stdout.contains(expected),
+            "expected `{expected}` in unfiltered find output:\n{stdout}",
+        );
+    }
+}
+
 /// Pick a safe temp path; skip the test if we cannot create one rather than
 /// failing spuriously on platforms where `/tmp` is read-only.
 fn tempfile_or_skip() -> PathBuf {

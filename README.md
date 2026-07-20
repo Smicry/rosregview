@@ -12,11 +12,10 @@ and Windows. GPL-2.0-or-later to match ReactOS.
 
 ## Status
 
-**Phase 2 (active development).** Three out of four planned
-subcommands implemented (`info`, `tree`, `list`, `show`) plus a typed
-JSON output path. The final `find` subcommand is on the roadmap but
-not yet implemented. For the wider design plan and Phase 0 background,
-see the author's planning notes (kept outside this repo).
+**Phase 2 complete.** All four planned subcommands implemented
+(`info`, `tree`, `list`, `show`, `find`) with shared `-f json`
+output. Ready for review against the ReactOS tree (collab) — letter
+to the maintainer sent, awaiting reply.
 
 ## Subcommands
 
@@ -114,9 +113,38 @@ binary                            REG_BINARY                01 02 03 04 05
 Total: 9 values
 ```
 
-### `find` — pattern search across the key hierarchy
+### `find <hive> [-n NAME]… [-v VALUE] [--case-sensitive] [--max-depth N] [-f json]` — pattern search
 
-**Not yet implemented.** Reserved for the last Phase-2 subcommand.
+Recursively walks the hive, collecting any key whose name matches
+`-n` (substring, repeatable for any-of, case-insensitive by default) and
+any value whose name+decoded-data contains `-v`. With no filters this
+just enumerates paths up to `--max-depth`.
+
+Value matching reuses `show`'s type-aware decoding so REG_SZ is
+substring-matched against the UTF-8 string, REG_DWORD/QWORD against
+the decimal+hex rendering, REG_BINARY against the hex-dump string,
+etc.
+
+```text
+$ rosregview find testdata/testhive -n test --max-depth 1
+File:     testdata/testhive
+Patterns: name~=["test"]  value~=None  case_sensitive=false
+Max depth: 1
+Scanned 6 keys, matched 5 key(s).
+
+big-data-test
+character-encoding-test
+data-test
+subkey-test
+subpath-test
+```
+
+```text
+$ rosregview find testdata/testhive -v 42 --max-depth 2
+…
+data-test
+    • dword: REG_DWORD = 42 (0x0000002a)
+```
 
 ## Build
 
