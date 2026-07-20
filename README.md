@@ -210,8 +210,6 @@ CI runs natively on Linux, macOS, and Windows, plus the
   rendering.
 - `serde` + `serde_json` 1.x — JSON output path behind `-f json`.
 - `anyhow` 1.x — `Result` propagation and rich error contexts.
-- `thiserror` 2.x — declarative `Error` derives (currently unused,
-  reserved for type-specific errors planned alongside `find`).
 
 `Cargo.lock` pins exact versions for reproducibility.
 

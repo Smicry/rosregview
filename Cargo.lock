@@ -206,7 +206,6 @@ dependencies = [
  "nt-hive",
  "serde",
  "serde_json",
- "thiserror",
 ]
 
 [[package]]
