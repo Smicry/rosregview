@@ -7,8 +7,9 @@
 //!   * `info <hive>`                  — overview + JSON via `-f json`
 //!   * `tree <hive> [--depth N]`      — recursive key tree, also JSON
 //!   * `list <hive> [PATH]`           — direct children at PATH, also JSON
+//!   * `show <hive> [PATH]`           — values of a key, also JSON
 //!
-//! Additional subcommands (`show`, `find`) will land in subsequent commits.
+//! `find` will land in a subsequent commit.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -68,6 +69,24 @@ enum Command {
         key_path: Option<String>,
 
         /// Output format (`human` is an aligned table, `json` is machine-readable).
+        #[arg(short = 'f', long = "format", value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+    },
+
+    /// Show the values of a key (default: the root). Per-value output
+    /// includes the value name, its REG_* type, and the data, decoded
+    /// according to the type where possible (UTF-16 strings, u32 little-
+    /// endian dwords, u64 little-endian qwords, ...). Binary data is shown
+    /// as a hex dump; long strings are truncated with a trailing `…`.
+    Show {
+        /// Path to a .hiv file (Windows registry configuration unit).
+        path: PathBuf,
+
+        /// Optional key path inside the hive (same convention as `list`).
+        #[arg(value_name = "KEY_PATH")]
+        key_path: Option<String>,
+
+        /// Output format (`human` is a typed table, `json` is machine-readable).
         #[arg(short = 'f', long = "format", value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
     },
@@ -136,6 +155,7 @@ fn main() -> Result<()> {
         Command::Info { path, format } => info_command(&path, format),
         Command::Tree { path, depth, format } => tree_command(&path, depth, format),
         Command::List { path, key_path, format } => list_command(&path, key_path.as_deref(), format),
+        Command::Show { path, key_path, format } => show_command(&path, key_path.as_deref(), format),
     }
 }
 
@@ -456,6 +476,302 @@ fn truncate_with_ellipsis(s: &str, max_chars: usize) -> String {
 }
 
 fn render_list_json(stats: &ListStats) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(stats)?);
+    Ok(())
+}
+
+// ----------------------------------------------------------------------
+// show
+// ----------------------------------------------------------------------
+
+/// A single value of a hive key, post-decoded into the structures we
+/// render. `reg_type` is the on-disk REG_* code as a readable string;
+/// `data_human` is pre-rendered text; `data_json` is the structured
+/// counterpart used by the JSON output sink.
+#[derive(Debug, Serialize)]
+struct ValueEntry {
+    name: String,
+    reg_type: String,
+    data_human: String,
+    data_json: serde_json::Value,
+}
+
+/// Payload for the `show` subcommand.
+#[derive(Debug, Serialize)]
+struct ShowStats {
+    #[serde(flatten)]
+    base: Stats,
+    at: String,
+    entries: Vec<ValueEntry>,
+    total_values: usize,
+}
+
+fn show_command(path: &Path, key_path: Option<&str>, format: OutputFormat) -> Result<()> {
+    let bytes = std::fs::read(path)
+        .with_context(|| format!("failed to read hive file `{}`", path.display()))?;
+    let hive = Hive::new(bytes.as_slice()).context("input is not a valid Windows registry hive")?;
+    let root = hive
+        .root_key_node()
+        .context("hive has no root key node")?;
+
+    let target = match key_path {
+        None | Some("") | Some(".") => root,
+        Some(p) => find_subpath(&root, p)?,
+    };
+    let target_name: &str = match key_path {
+        None | Some("") | Some(".") => "<root>",
+        Some(p) => p,
+    };
+
+    let entries = read_values(&target)?;
+
+    let stats = ShowStats {
+        base: Stats {
+            path: path.display().to_string(),
+            file_size_bytes: std::fs::metadata(path)
+                .context("failed to stat hive file")?
+                .len(),
+            parsed_ok: true,
+            minor_version_known: false,
+        },
+        at: target_name.to_string(),
+        total_values: entries.len(),
+        entries,
+    };
+
+    match format {
+        OutputFormat::Human => render_show_human(&stats),
+        OutputFormat::Json => render_show_json(&stats),
+    }
+}
+
+/// Read every value of `target` and decode name + data according to type.
+/// On a partial decode failure, we still return *something* rather than
+/// aborting the whole listing — a single corrupt value should not take
+/// down the rest.
+fn read_values<'a>(
+    target: &nt_hive::KeyNode<'a, &'a [u8]>,
+) -> Result<Vec<ValueEntry>> {
+    let iter = match target.values() {
+        Some(Ok(iter)) => iter,
+        Some(Err(e)) => return Err(anyhow::Error::new(e).context("malformed value list")),
+        None => return Ok(Vec::new()),
+    };
+
+    let mut out = Vec::new();
+    for val_result in iter {
+        let val = val_result
+            .map_err(|e| anyhow::Error::new(e).context("failed to advance value iterator"))?;
+        let name = val
+            .name()
+            .map_err(|e| anyhow::Error::new(e).context("failed to read value name"))?
+            .to_string_lossy();
+        let name = if name.is_empty() { "<default>".to_string() } else { name };
+
+        let reg_type = match val.data_type() {
+            Ok(t) => reg_type_label(t).to_string(),
+            Err(_) => "REG_UNKNOWN".to_string(),
+        };
+
+        let (data_human, data_json) = format_value_data(&val, &reg_type);
+        out.push(ValueEntry { name, reg_type, data_human, data_json });
+    }
+    Ok(out)
+}
+
+/// Decode a key value into a textual representation AND a structured
+/// JSON value. The textual one is used by the human sink, the structured
+/// one by the JSON sink. Both are produced from a single read of the
+/// hive so a corrupt big-data cell only gets walked once.
+fn format_value_data<'a>(
+    val: &nt_hive::KeyValue<'a, &'a [u8]>,
+    reg_type: &str,
+) -> (String, serde_json::Value) {
+    match reg_type {
+        "REG_SZ" | "REG_EXPAND_SZ" => match val.string_data() {
+            Ok(s) => decode_string_value(&s),
+            Err(e) => decode_failure(&e),
+        },
+        "REG_DWORD" => match val.dword_data() {
+            Ok(n) => decode_dword(n),
+            Err(e) => decode_failure(&e),
+        },
+        "REG_DWORD_BIG_ENDIAN" => match val.dword_data() {
+            Ok(n) => decode_dword(n),
+            Err(e) => decode_failure(&e),
+        },
+        "REG_QWORD" => match val.qword_data() {
+            Ok(n) => decode_qword(n),
+            Err(e) => decode_failure(&e),
+        },
+        "REG_MULTI_SZ" => match val.multi_string_data() {
+            Ok(iter) => decode_multi_string(iter),
+            Err(e) => decode_failure(&e),
+        },
+        // REG_BINARY, REG_NONE, REG_LINK, REG_RESOURCE_LIST,
+        // REG_FULL_RESOURCE_DESCRIPTOR, REG_RESOURCE_REQUIREMENTS_LIST,
+        // plus unknown future codes.
+        _ => decode_raw_bytes(val),
+    }
+}
+
+/// Decode a UTF-16-LE (lossy) string into both a human-readable text
+/// (with trailing-NUL trim and `…` truncation past 80 chars) and a JSON
+/// string.
+fn decode_string_value(s: &str) -> (String, serde_json::Value) {
+    const MAX_CHARS: usize = 80;
+    let trimmed = s.trim_end_matches('\0').to_string();
+    let display = truncate_with_ellipsis(&trimmed, MAX_CHARS);
+    let json = serde_json::Value::String(trimmed);
+    (display, json)
+}
+
+fn decode_dword(n: u32) -> (String, serde_json::Value) {
+    let text = format!("{} (0x{:08x})", n, n);
+    let json = serde_json::Value::Number(serde_json::Number::from(n));
+    (text, json)
+}
+
+fn decode_qword(n: u64) -> (String, serde_json::Value) {
+    let text = format!("{} (0x{:016x})", n, n);
+    let json = serde_json::Value::Number(serde_json::Number::from(n));
+    (text, json)
+}
+
+fn decode_multi_string<'a>(
+    iter: nt_hive::RegMultiSZStrings<'a, &'a [u8]>,
+) -> (String, serde_json::Value) {
+    let mut lines: Vec<String> = Vec::new();
+    for r in iter {
+        match r {
+            Ok(s) => lines.push(s.trim_end_matches('\0').to_string()),
+            Err(e) => {
+                return (
+                    format!("<multi-sz decode error: {e:?}>"),
+                    serde_json::Value::String(format!("<decode error>")),
+                );
+            }
+        }
+    }
+    let json = serde_json::Value::Array(
+        lines
+            .iter()
+            .map(|s| serde_json::Value::String(s.clone()))
+            .collect(),
+    );
+    let display = if lines.is_empty() {
+        "<empty>".to_string()
+    } else {
+        lines.join("  |  ")
+    };
+    (truncate_with_ellipsis(&display, 80), json)
+}
+
+/// Render raw bytes (REG_BINARY / REG_NONE / unknown) as a hex dump
+/// (first 32 bytes shown) plus a JSON byte-array of every byte.
+fn decode_raw_bytes<'a>(val: &nt_hive::KeyValue<'a, &'a [u8]>) -> (String, serde_json::Value) {
+    // Walk the data iterator once to collect full bytes — we use the same
+    // bytes for both the JSON array and the truncated hex dump.
+    let bytes: Vec<u8> = match val.data() {
+        Ok(nt_hive::KeyValueData::Small(d)) => d.to_vec(),
+        Ok(nt_hive::KeyValueData::Big(iter)) => {
+            let mut v = Vec::new();
+            for slice in iter {
+                match slice {
+                    Ok(s) => v.extend_from_slice(s),
+                    Err(_e) => break,
+                }
+            }
+            v
+        }
+        Err(_) => Vec::new(),
+    };
+
+    const SHOW_BYTES: usize = 32;
+    let (preview_text, more) = if bytes.len() <= SHOW_BYTES {
+        (hex_dump(&bytes), None)
+    } else {
+        (
+            hex_dump(&bytes[..SHOW_BYTES]),
+            Some((bytes.len() - SHOW_BYTES, format!("… ({} more bytes)", bytes.len() - SHOW_BYTES))),
+        )
+    };
+    let preview_text = if let Some((_, suffix)) = more {
+        format!("{preview_text} {suffix}")
+    } else {
+        preview_text
+    };
+
+    let json = serde_json::Value::Array(
+        bytes
+            .iter()
+            .map(|b| serde_json::Value::Number(serde_json::Number::from(u64::from(*b))))
+            .collect(),
+    );
+
+    (preview_text, json)
+}
+
+fn decode_failure(e: &nt_hive::NtHiveError) -> (String, serde_json::Value) {
+    (
+        format!("<decode error: {e:?}>"),
+        serde_json::Value::String(format!("<decode error>")),
+    )
+}
+
+fn hex_dump(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 3);
+    for (i, b) in bytes.iter().enumerate() {
+        if i > 0 {
+            s.push(' ');
+        }
+        s.push_str(&format!("{:02x}", b));
+    }
+    s
+}
+
+/// Map an `nt_hive::KeyValueDataType` to its user-facing REG_* name.
+fn reg_type_label(t: nt_hive::KeyValueDataType) -> &'static str {
+    use nt_hive::KeyValueDataType as K;
+    match t {
+        K::RegNone => "REG_NONE",
+        K::RegSZ => "REG_SZ",
+        K::RegExpandSZ => "REG_EXPAND_SZ",
+        K::RegBinary => "REG_BINARY",
+        K::RegDWord => "REG_DWORD",
+        K::RegDWordBigEndian => "REG_DWORD_BIG_ENDIAN",
+        K::RegLink => "REG_LINK",
+        K::RegMultiSZ => "REG_MULTI_SZ",
+        K::RegResourceList => "REG_RESOURCE_LIST",
+        K::RegFullResourceDescriptor => "REG_FULL_RESOURCE_DESCRIPTOR",
+        K::RegResourceRequirementsList => "REG_RESOURCE_REQUIREMENTS_LIST",
+        K::RegQWord => "REG_QWORD",
+    }
+}
+
+fn render_show_human(stats: &ShowStats) -> Result<()> {
+    println!("File:    {}", stats.base.path);
+    println!("At:      {}", stats.at);
+    println!();
+    println!(
+        "{:<32}  {:<24}  {}",
+        "Name", "Type", "Data"
+    );
+    println!("{}", "─".repeat(86));
+    for entry in &stats.entries {
+        println!(
+            "{:<32}  {:<24}  {}",
+            truncate_with_ellipsis(&entry.name, 32),
+            entry.reg_type,
+            entry.data_human
+        );
+    }
+    println!();
+    println!("Total: {} values", stats.total_values);
+    Ok(())
+}
+
+fn render_show_json(stats: &ShowStats) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(stats)?);
     Ok(())
 }

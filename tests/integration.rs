@@ -541,6 +541,194 @@ fn list_fails_cleanly_on_unknown_path() {
     );
 }
 
+// ----------------------------------------------------------------------
+// show subcommand
+// ----------------------------------------------------------------------
+
+#[test]
+fn show_decodes_all_common_reg_types_in_human_mode() {
+    let bin = binary_path();
+    assert_binary_exists(&bin);
+
+    let hive = test_hive_path();
+    let output = Command::new(&bin)
+        .arg("show")
+        .arg(&hive)
+        .arg("data-test")
+        .output()
+        .expect("failed to spawn rosregview");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "rosregview show data-test failed. stderr={}\nstdout={stdout}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    // Header
+    assert!(stdout.contains("At:      data-test"));
+    assert!(stdout.contains("Total: 9 values"));
+
+    // Each of the 9 known values must appear, by name + REG_* type.
+    let expected_rows: &[(&str, &str)] = &[
+        ("reg-sz", "REG_SZ"),
+        ("reg-sz-with-terminating-nul", "REG_SZ"),
+        ("reg-expand-sz", "REG_EXPAND_SZ"),
+        ("reg-multi-sz", "REG_MULTI_SZ"),
+        ("reg-multi-sz-big", "REG_MULTI_SZ"),
+        ("dword", "REG_DWORD"),
+        ("dword-big-endian", "REG_DWORD_BIG_ENDIAN"),
+        ("qword", "REG_QWORD"),
+        ("binary", "REG_BINARY"),
+    ];
+    for (name, reg_type) in expected_rows {
+        assert!(
+            stdout.contains(name),
+            "expected value name `{name}` in show output:\n{stdout}",
+        );
+        assert!(
+            stdout.contains(reg_type),
+            "expected reg type `{reg_type}` for value `{name}`:\n{stdout}",
+        );
+    }
+
+    // Sanity: REG_DWORD value 42 → dec `42` AND hex `0x0000002a` both shown.
+    assert!(stdout.contains("42 (0x0000002a)"));
+    // The big-endian DWORD reads the same value but with swapped bytes in hex.
+    assert!(stdout.contains("704643072 (0x2a000000)"));
+
+    // The trailing NUL REG_SZ must decode identically to the plain REG_SZ.
+    // (we strip the NUL for display consistency)
+    assert!(
+        stdout.contains("sz-test"),
+        "expected `sz-test` data after stripping trailing NUL, got:\n{stdout}",
+    );
+
+    // MULTI_SZ renders both lines with a separator.
+    assert!(
+        stdout.contains("multi-sz-test") && stdout.contains("line2"),
+        "expected both lines from REG_MULTI_SZ in human output:\n{stdout}",
+    );
+}
+
+#[test]
+fn show_emits_well_formed_json_with_typed_data() {
+    let bin = binary_path();
+    assert_binary_exists(&bin);
+
+    let hive = test_hive_path();
+    let output = Command::new(&bin)
+        .arg("show")
+        .arg("-f")
+        .arg("json")
+        .arg(&hive)
+        .arg("data-test")
+        .output()
+        .expect("failed to spawn rosregview");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "rosregview show -f json failed. stderr={}\nstdout={stdout}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let value: serde_json::Value =
+        serde_json::from_str(&stdout).expect("show JSON output must be valid JSON");
+
+    let obj = value.as_object().expect("top-level JSON should be an object");
+    for required in ["path", "at", "entries", "total_values"] {
+        assert!(obj.contains_key(required), "show JSON missing `{required}`");
+    }
+    assert_eq!(obj["at"].as_str(), Some("data-test"));
+
+    let entries = obj["entries"]
+        .as_array()
+        .expect("entries must be an array");
+    assert_eq!(entries.len(), 9);
+    assert_eq!(obj["total_values"].as_u64(), Some(9));
+
+    // Build a name->entry lookup so we can assert type-specific shapes
+    // without depending on entry ordering.
+    let by_name: std::collections::HashMap<String, &serde_json::Value> = entries
+        .iter()
+        .map(|e| {
+            let name = e["name"].as_str().unwrap().to_string();
+            (name, e)
+        })
+        .collect();
+
+    // REG_SZ → data_json is a JSON string.
+    let sz = by_name.get("reg-sz").expect("missing reg-sz entry");
+    assert_eq!(sz["reg_type"].as_str(), Some("REG_SZ"));
+    assert_eq!(sz["data_json"].as_str(), Some("sz-test"));
+
+    // REG_DWORD → data_json is a native JSON number.
+    let dw = by_name.get("dword").expect("missing dword entry");
+    assert_eq!(dw["data_json"].as_u64(), Some(42));
+
+    // REG_QWORD → data_json is a native u64.
+    let qw = by_name.get("qword").expect("missing qword entry");
+    assert_eq!(
+        qw["data_json"].as_u64(),
+        Some(0xffff_ffff_ffff_ffff),
+        "REG_QWORD max value should round-trip as native u64"
+    );
+
+    // REG_MULTI_SZ → data_json is an array of strings.
+    let msz = by_name
+        .get("reg-multi-sz")
+        .expect("missing reg-multi-sz entry");
+    let arr = msz["data_json"]
+        .as_array()
+        .expect("REG_MULTI_SZ data_json must be an array");
+    assert_eq!(
+        arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>(),
+        vec!["multi-sz-test", "line2"]
+    );
+
+    // REG_BINARY (small, 5 bytes) → data_json is a 5-element number array.
+    let bin = by_name.get("binary").expect("missing binary entry");
+    let bin_arr = bin["data_json"]
+        .as_array()
+        .expect("REG_BINARY data_json must be an array");
+    let bin_bytes: Vec<u8> = bin_arr
+        .iter()
+        .map(|v| v.as_u64().unwrap() as u8)
+        .collect();
+    assert_eq!(bin_bytes, vec![1, 2, 3, 4, 5]);
+}
+
+#[test]
+fn show_renders_big_binary_with_size_summary() {
+    let bin = binary_path();
+    assert_binary_exists(&bin);
+
+    let hive = test_hive_path();
+    let output = Command::new(&bin)
+        .arg("show")
+        .arg(&hive)
+        .arg("big-data-test")
+        .output()
+        .expect("failed to spawn rosregview");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "rosregview show big-data-test failed. stderr={}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    // big-data-test has 3 large REG_BINARY values, each many KiB. The
+    // human output must surface that they're huge without dumping them in
+    // full — `Total: 3 values` plus a per-row "... (N more bytes)" hint.
+    assert!(stdout.contains("Total: 3 values"));
+    assert!(
+        stdout.contains("more bytes"),
+        "expected truncation hint `more bytes` for big-data-test:\n{stdout}",
+    );
+}
+
 /// Pick a safe temp path; skip the test if we cannot create one rather than
 /// failing spuriously on platforms where `/tmp` is read-only.
 fn tempfile_or_skip() -> PathBuf {
