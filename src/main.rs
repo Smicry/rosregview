@@ -133,7 +133,9 @@ struct Stats {
     minor_version_known: bool,
 }
 
-/// A single key in the recursive tree (used by both `tree` and `show` paths).
+/// A single key in the recursive tree. Used only by `tree`; `show` has
+/// its own `ValueEntry`/`ListEntry` types because values and subkeys are
+/// decoded along different paths (typed `KeyValueData` vs raw key index).
 #[derive(Debug, Serialize)]
 struct KeyTreeNode {
     name: String,
