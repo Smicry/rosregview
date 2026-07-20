@@ -159,3 +159,59 @@ fn tempfile_or_skip() -> PathBuf {
         candidate
     }
 }
+
+#[test]
+fn windows_exe_artifact_is_valid_pe32_when_present() {
+    // CI gate: a Windows .exe produced via `cargo zigbuild --target
+    // i686-pc-windows-gnu` should be a PE32 i386 binary. We *only* run this
+    // check if the artifact exists; local devs who skip zigbuild aren't
+    // blocked, but a CI run that fails to produce the artifact trips here.
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
+    let exe = manifest
+        .join("target")
+        .join("i686-pc-windows-gnu")
+        .join(profile)
+        .join("rosregview.exe");
+
+    if !exe.is_file() {
+        eprintln!(
+            "skipping: {} not found (run `cargo zigbuild --release \
+             --target i686-pc-windows-gnu` to produce it)",
+            exe.display()
+        );
+        return;
+    }
+
+    let bytes = std::fs::read(&exe).expect("read .exe");
+    assert!(
+        bytes.len() >= 64 && &bytes[..2] == b"MZ",
+        "{} is not a PE file (missing MZ header)",
+        exe.display(),
+    );
+    // e_lfanew at offset 0x3C points at the "PE\0\0" signature.
+    let pe_offset = u32::from_le_bytes([bytes[0x3C], bytes[0x3D], bytes[0x3E], bytes[0x3F]])
+        as usize;
+    assert!(
+        pe_offset + 4 <= bytes.len() && &bytes[pe_offset..pe_offset + 4] == b"PE\0\0",
+        "{}: PE signature not found at offset 0x{pe_offset:x}",
+        exe.display(),
+    );
+
+    // Machine type for i386 = 0x014C, right after the signature.
+    let machine = u16::from_le_bytes([bytes[pe_offset + 4], bytes[pe_offset + 5]]);
+    assert_eq!(
+        machine, 0x014C,
+        "{}: expected i386 machine type (0x014C), got 0x{machine:04x}",
+        exe.display(),
+    );
+
+    // Optional subsystem assertion: IMAGE_SUBSYSTEM_WINDOWS_CUI = 3.
+    // Subsystem field lives at offset 0x5C from the PE signature.
+    let subsys = u16::from_le_bytes([bytes[pe_offset + 0x5C], bytes[pe_offset + 0x5D]]);
+    assert_eq!(
+        subsys, 3,
+        "{}: expected Windows CUI subsystem (3), got {subsys}",
+        exe.display(),
+    );
+}

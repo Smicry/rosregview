@@ -45,23 +45,27 @@ Root subkeys:   5
 ## Cross-compiling to Windows
 
 This MVP builds natively on macOS, Linux, and Windows from the same source
-tree. Producing a Windows `.exe` from macOS via `cargo build --target
-i686-pc-windows-gnu` is gated on a working MinGW-w64 toolchain — the
-Homebrew `mingw-w64@14` formula ships `libgcc_eh.a` without the
-`_Unwind_Resume` symbol that the standard Rust link line expects (a known
-issue with GCC ≥16 + mingw + Rust ≥1.94 combinations).
+tree. Producing a Windows `.exe` from macOS requires a working MinGW-w64
+toolchain — the Homebrew `mingw-w64@14` formula ships `libgcc_eh.a`
+without the `_Unwind_Resume` symbol that the standard Rust link line
+expects (a known issue with GCC ≥16 + mingw + Rust ≥1.94 combinations).
 
-We intentionally defer the cross-compile artifact. It will be produced
-automatically via GitHub Actions CI in a future commit, where the cached
-`rust-toolchain` + MinGW toolchain image sidesteps this environment bug.
-
-For local Windows builds, developers just run:
+The supported workaround today is
+[`cargo-zigbuild`](https://github.com/rust-cross/cargo-zigbuild):
+Zig bundles its own MinGW stdlib that *does* ship unwinding, so it
+sidesteps the broken `mingw-w64@14` `libgcc_eh` and produces a clean
+PE32 i386 `.exe` from macOS:
 
 ```bash
-cargo build --release
+brew install zig                     # one-time
+cargo install cargo-zigbuild         # one-time
+rustup target add i686-pc-windows-gnu
+cargo zigbuild --release --target i686-pc-windows-gnu
+# → target/i686-pc-windows-gnu/release/rosregview.exe (~650 KB)
 ```
 
-on a Windows or Linux box — no special toolchain required.
+For local Windows or Linux builds, no special toolchain is required —
+just `cargo build --release`.
 
 ## Dependencies
 
