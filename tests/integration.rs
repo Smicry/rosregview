@@ -26,11 +26,12 @@ fn binary_path() -> PathBuf {
     // CARGO_MANIFEST_DIR is set to the crate root at test time.
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     // profile is `debug` for `cargo test` and `release` for `cargo test --release`.
-    let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
-    manifest
-        .join("target")
-        .join(profile)
-        .join("rosregview")
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    manifest.join("target").join(profile).join("rosregview")
 }
 
 /// Absolute path to the test hive, resolved relative to the workspace root.
@@ -176,8 +177,15 @@ fn info_emits_valid_json_in_json_mode() {
 
     // Spot-check the documented shape. Future formats (tree/list) reuse the
     // same Stats base contract, so this gives forward-compatibility assurance.
-    let obj = value.as_object().expect("expected JSON object at top level");
-    for required in ["path", "file_size_bytes", "root_subkey_count", "minor_version_known"] {
+    let obj = value
+        .as_object()
+        .expect("expected JSON object at top level");
+    for required in [
+        "path",
+        "file_size_bytes",
+        "root_subkey_count",
+        "minor_version_known",
+    ] {
         assert!(
             obj.contains_key(required),
             "JSON payload missing key `{required}`; got keys: {:?}",
@@ -247,7 +255,10 @@ fn tree_lists_subkeys_in_human_mode() {
     );
 
     // Header
-    assert!(stdout.contains("File:"), "missing `File:` header in stdout:\n{stdout}");
+    assert!(
+        stdout.contains("File:"),
+        "missing `File:` header in stdout:\n{stdout}"
+    );
     assert!(stdout.contains("Size:"));
     assert!(stdout.contains("Depth:"));
     assert!(
@@ -359,8 +370,16 @@ fn tree_emits_well_formed_json_with_recursive_subkeys() {
     let value: serde_json::Value =
         serde_json::from_str(&stdout).expect("tree JSON output must be valid JSON");
 
-    let obj = value.as_object().expect("top-level JSON should be an object");
-    for required in ["path", "file_size_bytes", "parsed_ok", "depth_limit", "tree"] {
+    let obj = value
+        .as_object()
+        .expect("top-level JSON should be an object");
+    for required in [
+        "path",
+        "file_size_bytes",
+        "parsed_ok",
+        "depth_limit",
+        "tree",
+    ] {
         assert!(
             obj.contains_key(required),
             "JSON payload missing `{required}`",
@@ -493,12 +512,11 @@ fn list_emits_well_formed_json_with_entries() {
     let value: serde_json::Value =
         serde_json::from_str(&stdout).expect("list JSON output must be valid JSON");
 
-    let obj = value.as_object().expect("top-level JSON should be an object");
+    let obj = value
+        .as_object()
+        .expect("top-level JSON should be an object");
     for required in ["path", "at", "entries", "total_entries"] {
-        assert!(
-            obj.contains_key(required),
-            "list JSON missing `{required}`",
-        );
+        assert!(obj.contains_key(required), "list JSON missing `{required}`",);
     }
     assert_eq!(obj["at"].as_str(), Some("character-encoding-test"));
 
@@ -636,15 +654,15 @@ fn show_emits_well_formed_json_with_typed_data() {
     let value: serde_json::Value =
         serde_json::from_str(&stdout).expect("show JSON output must be valid JSON");
 
-    let obj = value.as_object().expect("top-level JSON should be an object");
+    let obj = value
+        .as_object()
+        .expect("top-level JSON should be an object");
     for required in ["path", "at", "entries", "total_values"] {
         assert!(obj.contains_key(required), "show JSON missing `{required}`");
     }
     assert_eq!(obj["at"].as_str(), Some("data-test"));
 
-    let entries = obj["entries"]
-        .as_array()
-        .expect("entries must be an array");
+    let entries = obj["entries"].as_array().expect("entries must be an array");
     assert_eq!(entries.len(), 9);
     assert_eq!(obj["total_values"].as_u64(), Some(9));
 
@@ -692,10 +710,7 @@ fn show_emits_well_formed_json_with_typed_data() {
     let bin_arr = bin["data_json"]
         .as_array()
         .expect("REG_BINARY data_json must be an array");
-    let bin_bytes: Vec<u8> = bin_arr
-        .iter()
-        .map(|v| v.as_u64().unwrap() as u8)
-        .collect();
+    let bin_bytes: Vec<u8> = bin_arr.iter().map(|v| v.as_u64().unwrap() as u8).collect();
     assert_eq!(bin_bytes, vec![1, 2, 3, 4, 5]);
 }
 
@@ -875,20 +890,17 @@ fn find_emits_well_formed_json_matches() {
     let value: serde_json::Value =
         serde_json::from_str(&stdout).expect("find JSON output must be valid JSON");
 
-    let obj = value.as_object().expect("find JSON should be a top-level object");
+    let obj = value
+        .as_object()
+        .expect("find JSON should be a top-level object");
     for required in ["path", "patterns", "max_depth", "matches", "total_keys"] {
-        assert!(
-            obj.contains_key(required),
-            "find JSON missing `{required}`",
-        );
+        assert!(obj.contains_key(required), "find JSON missing `{required}`",);
     }
     // `-n data-test --max-depth 2` is a SUBSTRING match (case-insensitive),
     // so both `data-test` and `big-data-test` qualify. Assert that the
     // matches are coherent JSON objects rather than pinning the exact
     // count, since future fixtures may add or remove root children.
-    let matches = obj["matches"]
-        .as_array()
-        .expect("matches must be an array");
+    let matches = obj["matches"].as_array().expect("matches must be an array");
     assert!(
         !matches.is_empty(),
         "expected at least one match for `-n data-test`; got: {}",
@@ -910,7 +922,9 @@ fn find_emits_well_formed_json_matches() {
 
     // patterns echo back what we asked for.
     assert_eq!(obj["patterns"]["case_sensitive"].as_bool(), Some(false));
-    let names = obj["patterns"]["name"].as_array().expect("patterns.name must be array");
+    let names = obj["patterns"]["name"]
+        .as_array()
+        .expect("patterns.name must be array");
     assert_eq!(names.len(), 1);
     assert_eq!(names[0].as_str(), Some("data-test"));
     assert_eq!(obj["patterns"]["value"], serde_json::Value::Null);
@@ -979,7 +993,11 @@ fn windows_exe_artifact_is_valid_pe32_when_present() {
     // check if the artifact exists; local devs who skip zigbuild aren't
     // blocked, but a CI run that fails to produce the artifact trips here.
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
     let exe = manifest
         .join("target")
         .join("i686-pc-windows-gnu")
@@ -1002,8 +1020,8 @@ fn windows_exe_artifact_is_valid_pe32_when_present() {
         exe.display(),
     );
     // e_lfanew at offset 0x3C points at the "PE\0\0" signature.
-    let pe_offset = u32::from_le_bytes([bytes[0x3C], bytes[0x3D], bytes[0x3E], bytes[0x3F]])
-        as usize;
+    let pe_offset =
+        u32::from_le_bytes([bytes[0x3C], bytes[0x3D], bytes[0x3E], bytes[0x3F]]) as usize;
     assert!(
         pe_offset + 4 <= bytes.len() && &bytes[pe_offset..pe_offset + 4] == b"PE\0\0",
         "{}: PE signature not found at offset 0x{pe_offset:x}",
@@ -1013,7 +1031,8 @@ fn windows_exe_artifact_is_valid_pe32_when_present() {
     // Machine type for i386 = 0x014C, right after the signature.
     let machine = u16::from_le_bytes([bytes[pe_offset + 4], bytes[pe_offset + 5]]);
     assert_eq!(
-        machine, 0x014C,
+        machine,
+        0x014C,
         "{}: expected i386 machine type (0x014C), got 0x{machine:04x}",
         exe.display(),
     );
@@ -1022,7 +1041,8 @@ fn windows_exe_artifact_is_valid_pe32_when_present() {
     // Subsystem field lives at offset 0x5C from the PE signature.
     let subsys = u16::from_le_bytes([bytes[pe_offset + 0x5C], bytes[pe_offset + 0x5D]]);
     assert_eq!(
-        subsys, 3,
+        subsys,
+        3,
         "{}: expected Windows CUI subsystem (3), got {subsys}",
         exe.display(),
     );

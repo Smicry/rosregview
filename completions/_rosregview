@@ -1,0 +1,215 @@
+#compdef rosregview
+
+autoload -U is-at-least
+
+_rosregview() {
+    typeset -A opt_args
+    typeset -a _arguments_options
+    local ret=1
+
+    if is-at-least 5.2; then
+        _arguments_options=(-s -S -C)
+    else
+        _arguments_options=(-s -C)
+    fi
+
+    local context curcontext="$curcontext" state line
+    _arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+":: :_rosregview_commands" \
+"*::: :->rosregview" \
+&& ret=0
+    case $state in
+    (rosregview)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:rosregview-command-$line[1]:"
+        case $line[1] in
+            (info)
+_arguments "${_arguments_options[@]}" : \
+'-f+[Output format (\`human\` is the default table, \`json\` is machine-readable)]:FORMAT:(human json)' \
+'--format=[Output format (\`human\` is the default table, \`json\` is machine-readable)]:FORMAT:(human json)' \
+'-h[Print help]' \
+'--help[Print help]' \
+':path -- Path to a .hiv file (Windows registry configuration unit):_files' \
+&& ret=0
+;;
+(tree)
+_arguments "${_arguments_options[@]}" : \
+'-d+[Maximum recursion depth. 0 = show only the root, 1 = root + direct children, 2 = up to grand-children, ... Default\: unlimited]:N:_default' \
+'--depth=[Maximum recursion depth. 0 = show only the root, 1 = root + direct children, 2 = up to grand-children, ... Default\: unlimited]:N:_default' \
+'-f+[Output format (\`human\` is the indented text tree, \`json\` is machine-readable)]:FORMAT:(human json)' \
+'--format=[Output format (\`human\` is the indented text tree, \`json\` is machine-readable)]:FORMAT:(human json)' \
+'-h[Print help]' \
+'--help[Print help]' \
+':path -- Path to a .hiv file (Windows registry configuration unit):_files' \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'-f+[Output format (\`human\` is an aligned table, \`json\` is machine-readable)]:FORMAT:(human json)' \
+'--format=[Output format (\`human\` is an aligned table, \`json\` is machine-readable)]:FORMAT:(human json)' \
+'-h[Print help]' \
+'--help[Print help]' \
+':path -- Path to a .hiv file (Windows registry configuration unit):_files' \
+'::key_path -- Optional key path inside the hive. Use `\` (escaped as `\\` in most shells) to separate levels. Empty/missing → hive root:_default' \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+'-f+[Output format (\`human\` is a typed table, \`json\` is machine-readable)]:FORMAT:(human json)' \
+'--format=[Output format (\`human\` is a typed table, \`json\` is machine-readable)]:FORMAT:(human json)' \
+'-h[Print help]' \
+'--help[Print help]' \
+':path -- Path to a .hiv file (Windows registry configuration unit):_files' \
+'::key_path -- Optional key path inside the hive (same convention as `list`):_default' \
+&& ret=0
+;;
+(find)
+_arguments "${_arguments_options[@]}" : \
+'*-n+[Substring to match in key names. Repeat to OR multiple patterns]:PATTERN:_default' \
+'*--name=[Substring to match in key names. Repeat to OR multiple patterns]:PATTERN:_default' \
+'-v+[Substring to match in value name + decoded data (any value within a matching key whose name/data contains the pattern)]:PATTERN:_default' \
+'--value=[Substring to match in value name + decoded data (any value within a matching key whose name/data contains the pattern)]:PATTERN:_default' \
+'--max-depth=[Limit recursion depth. 0 = root only, 1 = root + direct children, ... Default\: unlimited]:N:_default' \
+'-f+[Output format (\`human\` is a path list, \`json\` is machine-readable)]:FORMAT:(human json)' \
+'--format=[Output format (\`human\` is a path list, \`json\` is machine-readable)]:FORMAT:(human json)' \
+'--case-sensitive[Match case-sensitively. Default\: case-insensitive]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':path -- Path to a .hiv file (Windows registry configuration unit):_files' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_rosregview__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:rosregview-help-command-$line[1]:"
+        case $line[1] in
+            (info)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(tree)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(find)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+}
+
+(( $+functions[_rosregview_commands] )) ||
+_rosregview_commands() {
+    local commands; commands=(
+'info:Show a one-line summary for a hive file\: size, root subkey count' \
+'tree:Recursively print the key tree of a hive file (uses ASCII-only indent)' \
+'list:List the direct subkeys of a key (default\: the root), with subkey and value counts. The optional \`KEY_PATH\` may be a single segment (\`ControlSet001\`) or a backslash-separated subpath (\`A\\B\\C\`). Empty path == the root' \
+'show:Show the values of a key (default\: the root). Per-value output includes the value name, its REG_* type, and the data, decoded according to the type where possible (UTF-16 strings, u32 little- endian dwords, u64 little-endian qwords, ...). Binary data is shown as a hex dump; long strings are truncated with a trailing \`…\`' \
+'find:Search the key hierarchy for keys with names matching \`-n\` (substring, repeatable, any-of, case-insensitive by default) and/or values whose name+decoded-data contains \`-v\`. With no filters, this enumerates every key path up to \`--max-depth\`' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'rosregview commands' commands "$@"
+}
+(( $+functions[_rosregview__subcmd__find_commands] )) ||
+_rosregview__subcmd__find_commands() {
+    local commands; commands=()
+    _describe -t commands 'rosregview find commands' commands "$@"
+}
+(( $+functions[_rosregview__subcmd__help_commands] )) ||
+_rosregview__subcmd__help_commands() {
+    local commands; commands=(
+'info:Show a one-line summary for a hive file\: size, root subkey count' \
+'tree:Recursively print the key tree of a hive file (uses ASCII-only indent)' \
+'list:List the direct subkeys of a key (default\: the root), with subkey and value counts. The optional \`KEY_PATH\` may be a single segment (\`ControlSet001\`) or a backslash-separated subpath (\`A\\B\\C\`). Empty path == the root' \
+'show:Show the values of a key (default\: the root). Per-value output includes the value name, its REG_* type, and the data, decoded according to the type where possible (UTF-16 strings, u32 little- endian dwords, u64 little-endian qwords, ...). Binary data is shown as a hex dump; long strings are truncated with a trailing \`…\`' \
+'find:Search the key hierarchy for keys with names matching \`-n\` (substring, repeatable, any-of, case-insensitive by default) and/or values whose name+decoded-data contains \`-v\`. With no filters, this enumerates every key path up to \`--max-depth\`' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'rosregview help commands' commands "$@"
+}
+(( $+functions[_rosregview__subcmd__help__subcmd__find_commands] )) ||
+_rosregview__subcmd__help__subcmd__find_commands() {
+    local commands; commands=()
+    _describe -t commands 'rosregview help find commands' commands "$@"
+}
+(( $+functions[_rosregview__subcmd__help__subcmd__help_commands] )) ||
+_rosregview__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'rosregview help help commands' commands "$@"
+}
+(( $+functions[_rosregview__subcmd__help__subcmd__info_commands] )) ||
+_rosregview__subcmd__help__subcmd__info_commands() {
+    local commands; commands=()
+    _describe -t commands 'rosregview help info commands' commands "$@"
+}
+(( $+functions[_rosregview__subcmd__help__subcmd__list_commands] )) ||
+_rosregview__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'rosregview help list commands' commands "$@"
+}
+(( $+functions[_rosregview__subcmd__help__subcmd__show_commands] )) ||
+_rosregview__subcmd__help__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'rosregview help show commands' commands "$@"
+}
+(( $+functions[_rosregview__subcmd__help__subcmd__tree_commands] )) ||
+_rosregview__subcmd__help__subcmd__tree_commands() {
+    local commands; commands=()
+    _describe -t commands 'rosregview help tree commands' commands "$@"
+}
+(( $+functions[_rosregview__subcmd__info_commands] )) ||
+_rosregview__subcmd__info_commands() {
+    local commands; commands=()
+    _describe -t commands 'rosregview info commands' commands "$@"
+}
+(( $+functions[_rosregview__subcmd__list_commands] )) ||
+_rosregview__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'rosregview list commands' commands "$@"
+}
+(( $+functions[_rosregview__subcmd__show_commands] )) ||
+_rosregview__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'rosregview show commands' commands "$@"
+}
+(( $+functions[_rosregview__subcmd__tree_commands] )) ||
+_rosregview__subcmd__tree_commands() {
+    local commands; commands=()
+    _describe -t commands 'rosregview tree commands' commands "$@"
+}
+
+if [ "$funcstack[1]" = "_rosregview" ]; then
+    _rosregview "$@"
+else
+    compdef _rosregview rosregview
+fi

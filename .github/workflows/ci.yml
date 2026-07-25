@@ -43,6 +43,12 @@ jobs:
         with:
           cache-on-failure: false
 
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --all-targets --locked -- -D warnings
+
       - name: Build
         run: cargo build --${{ matrix.profile }} --locked --verbose
 
@@ -126,3 +132,48 @@ jobs:
           name: rosregview-i686-pc-windows-gnu-${{ github.sha }}
           path: target/i686-pc-windows-gnu/release/rosregview.exe
           if-no-files-found: error
+
+  # ----------------------------------------------------------------------
+  # Completions / man page drift check. We regenerate the
+  # shell-completion scripts and the man page from the current CLI
+  # surface, then `diff` against the checked-in copies. Any mismatch
+  # fails the build so PRs that change the CLI surface must update
+  # the generated files.
+  # ----------------------------------------------------------------------
+  completions:
+    name: completions / drift check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo target
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: false
+
+      - name: Build gen-completions
+        run: cargo build --bin gen-completions --locked
+
+      - name: Regenerate and diff
+        # If the checked-in completions/ and man/ files are stale
+        # relative to the current CLI surface, this fails the job and
+        # the contributor knows to `cargo run --bin gen-completions
+        # -- --outdir .` and commit the result.
+        run: |
+          set -euxo pipefail
+          cargo run --quiet --bin gen-completions -- --outdir generated-tmp
+          diff -ruN completions/ generated-tmp/completions/ > completions.diff || true
+          diff -ruN man/         generated-tmp/man/         > man.diff         || true
+          if [ -s completions.diff ] || [ -s man.diff ]; then
+            echo "::error::checked-in completions/man are out of date"
+            echo "--- completions.diff ---"
+            cat completions.diff
+            echo "--- man.diff ---"
+            cat man.diff
+            echo "---"
+            echo "Re-run: cargo run --bin gen-completions -- --outdir ."
+            exit 1
+          fi
