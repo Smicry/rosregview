@@ -201,6 +201,20 @@ artifact is absent.
 CI runs natively on Linux, macOS, and Windows, plus the
 `cargo-zigbuild` cross compile.
 
+## CI test tiers
+
+Two independent workflows run in GitHub Actions:
+
+| Workflow | What it covers | Trigger |
+|---|---|---|
+| `ci.yml` | Native build + integration tests on Linux/macOS/Windows, plus `i686-pc-windows-gnu` cross-compile via Zig. Enforces `cargo fmt --all -- --check` and `cargo clippy --all-targets -- -D warnings`. | every push, every PR |
+| `real-hives.yml` | Downloads the latest ReactOS LiveCD (a `.7z` from `iso.reactos.org/livecd/`), extracts the actual `SYSTEM`/`SOFTWARE`/`SAM`/`SECURITY`/`DEFAULT` hive files, and smoke-tests `rosregview` against them. No QEMU/KVM needed. | PRs touching source, weekly cron, manual |
+
+The `real-hives` workflow keeps us honest against real-world hive data
+that the bundled 159 KB `testdata/testhive` fixture can't cover —
+multi-MB hives, different minor-version variants, hive files that
+ship with the current ReactOS nightly.
+
 ## Dependencies
 
 - [`nt-hive`](https://crates.io/crates/nt-hive) 0.3 (GPL-2.0-or-later) —

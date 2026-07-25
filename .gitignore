@@ -1,1 +1,11 @@
+# Real ReactOS hives downloaded by the real-hives CI workflow.
+# Never committed — the workflow re-extracts them from a fresh LiveCD.
+testdata/real/
+
+# Intermediate extraction trees produced by the real-hives workflow.
+reactos-livecd.7z
+livecd-stage-1/
+livecd-stage-2/
+
+# Build artifacts.
 /target

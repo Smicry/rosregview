@@ -1,0 +1,234 @@
+name: real-hives
+
+on:
+  # Manual trigger for debugging. LiveCD ISO is 40 MB so we don't
+  # auto-run on every PR.
+  workflow_dispatch:
+
+  # Weekly cron — once per Monday morning — to surface silent
+  # regressions in nt-hive against new ReactOS LiveCD builds.
+  schedule:
+    - cron: '17 6 * * 1'
+
+  # Auto-run on PRs that change source code or this workflow.
+  pull_request:
+    branches: [master]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/real-hives.yml'
+
+concurrency:
+  group: real-hives-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  REACTOS_LIVECD_DIR: https://iso.reactos.org/livecd/
+
+jobs:
+  # ----------------------------------------------------------------------
+  # Download the ReactOS LiveCD (the 7z archive from iso.reactos.org),
+  # extract the actual hives, and smoke-test rosregview against them.
+  #
+  # We don't boot ReactOS — we just need the .hiv files, which the
+  # archive carries as raw registry data inside its ISO image.
+  # ----------------------------------------------------------------------
+  extract-and-test:
+    name: real ReactOS LiveCD hive smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      # ---------- 1. Discover + download LiveCD 7z ----------
+      - name: Cache LiveCD archive
+        id: cache-iso
+        uses: actions/cache@v4
+        with:
+          path: reactos-livecd.7z
+          # Bumping this key (or touching the workflow file) re-downloads.
+          key: reactos-livecd-v1-${{ hashFiles('.github/workflows/real-hives.yml') }}
+
+      - name: Discover latest x86 LiveCD archive URL
+        id: discover
+        if: steps.cache-iso.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          # We pin to x86-gcc-lin: it's the smallest variant (~40 MB
+          # compressed) and matches what we'd run natively on Linux.
+          #
+          # Picking the "latest" by date is harder than it looks:
+          # the iso.reactos.org directory mixes several version branches
+          # (0.4.9-dev, 0.4.14-release, 0.4.15-dev, 0.4.17-dev, ...) and
+          # a plain `tail -1` would return whatever lexicographically
+          # sorts last, not the most recent commit. We:
+          #   1. Restrict to `-dev-` builds (pre-release, picked up
+          #      from the active development branch).
+          #   2. `sort -V -k5 -t-` does a version-aware sort on the
+          #      5th dash-separated field — that's the dev number
+          #      (`...-dev-8638-...`), which is monotonically increasing
+          #      within each version branch.
+          URL=$(
+            curl -fsSL "${REACTOS_LIVECD_DIR}" \
+              | grep -oE 'href="reactos-livecd-[^"]+x86-gcc-lin-dbg\.7z"' \
+              | sed 's/^href="//; s/"$//' \
+              | grep -- '-dev-' \
+              | sort -t- -k5 -V -u \
+              | tail -1
+          )
+          if [ -z "${URL}" ]; then
+            echo "::error::could not discover a LiveCD 7z URL at ${REACTOS_LIVECD_DIR}" >&2
+            exit 1
+          fi
+          echo "url=${REACTOS_LIVECD_DIR}${URL}" >> "${GITHUB_OUTPUT}"
+          echo "basename=${URL}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download ReactOS LiveCD 7z
+        if: steps.cache-iso.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 -o reactos-livecd.7z "${{ steps.discover.outputs.url }}"
+          ls -lh reactos-livecd.7z
+
+      # ---------- 2. Extract hives ----------
+      - name: Install 7zip
+        run: sudo apt-get update && sudo apt-get install -y p7zip-full
+
+      - name: List 7z contents (debug visibility)
+        # Surface the archive layout in the job log so future path
+        # changes are easy to diagnose without re-running locally.
+        run: 7z l reactos-livecd.7z | tail -40
+
+      - name: Extract 7z → ISO
+        # The 7z wraps an ISO image. We extract once to get the ISO,
+        # then mount/extract the ISO to reach the hive files.
+        run: |
+          set -euo pipefail
+          7z x -y reactos-livecd.7z -olivecd-stage-1 >/dev/null
+          ls -la livecd-stage-1/
+
+      - name: Extract ISO → hive files
+        # 7z can extract ISO9660 images directly. Hives live under
+        # reactos/system32/config/ — we discover them by name to stay
+        # robust against small layout changes between ReactOS versions.
+        run: |
+          set -euo pipefail
+          ISO=$(find livecd-stage-1 -maxdepth 2 -name '*.iso' | head -1)
+          if [ -z "${ISO}" ]; then
+            echo "::error::no .iso found inside the 7z archive" >&2
+            find livecd-stage-1 -maxdepth 3 -type f
+            exit 1
+          fi
+          echo "Extracting ${ISO}..."
+          7z x -y "${ISO}" -olivecd-stage-2 >/dev/null
+          ls livecd-stage-2/
+
+      - name: Locate real hives
+        id: locate
+        run: |
+          set -euo pipefail
+          mkdir -p testdata/real
+          FOUND=0
+          # Walk the extracted tree once, picking out the hives we care about.
+          # ReactOS LiveCD hives live under `reactos/system32/config/` with
+          # lowercase basenames (`system`, `software`, ...), so we use
+          # `-iname` to match case-insensitively. We rename each match to
+          # uppercase on copy so the rosregview smoke commands below read
+          # exactly as they would on a Windows install.
+          for hive in SYSTEM SOFTWARE SAM SECURITY DEFAULT; do
+            src=$(
+              find livecd-stage-2 -type f \
+                \( -iwholename '*/system32/config/*' -o -iwholename '*/config/*' \) \
+                -iname "${hive}" \
+              | head -1
+            )
+            if [ -n "${src}" ]; then
+              cp "${src}" "testdata/real/${hive}"
+              echo "extracted: ${hive} ($(stat -c%s testdata/real/${hive}) bytes from ${src})"
+              FOUND=$((FOUND + 1))
+            else
+              echo "::warning::hive `${hive}` not found in archive"
+            fi
+          done
+
+          if [ "${FOUND}" -eq 0 ]; then
+            echo "::error::no hives extracted — check archive layout above" >&2
+            exit 1
+          fi
+          echo "found=${FOUND}" >> "${GITHUB_OUTPUT}"
+
+      # ---------- 3. Build + smoke ----------
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo target
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: false
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Build rosregview (release)
+        run: cargo build --release --locked --verbose
+
+      - name: Smoke: info on real SYSTEM and SOFTWARE
+        run: |
+          ./target/release/rosregview info testdata/real/SYSTEM
+          echo "---"
+          ./target/release/rosregview info testdata/real/SOFTWARE
+
+      - name: Smoke: tree --depth 2 on SOFTWARE
+        run: |
+          ./target/release/rosregview tree --depth 2 testdata/real/SOFTWARE | head -40
+
+      - name: Smoke: show all values of a well-known key
+        # `rosregview show` takes the hive file as the first positional
+        # and the key path as a second positional (no --path flag, no
+        # --value filter — the command lists every value of the key).
+        # ControlSet001\\Control\\ProductOptions is present in any
+        # healthy SYSTEM hive and contains the `ProductType` REG_SZ.
+        run: |
+          set -euo pipefail
+          output=$(./target/release/rosregview show testdata/real/SYSTEM \
+            'ControlSet001\Control\ProductOptions')
+          echo "${output}"
+          # ProductType is REG_SZ; nt-hive decodes it to text. Assert
+          # the output mentions both the value name AND the type label
+          # so we catch regressions on either side.
+          if ! grep -q "ProductType" <<<"${output}"; then
+            echo "::error::expected ProductType in output" >&2
+            exit 1
+          fi
+          if ! grep -q "REG_SZ" <<<"${output}"; then
+            echo "::error::expected REG_SZ type label in output" >&2
+            exit 1
+          fi
+
+      - name: Smoke: JSON output is valid
+        run: |
+          ./target/release/rosregview info -f json testdata/real/SYSTEM \
+            | python3 -c "import sys, json; json.load(sys.stdin); print('JSON OK')"
+
+      # ---------- 4. Cleanup intermediates ----------
+      - name: Drop extracted archive (keep testdata/real)
+        # The 7z + ISO + extraction stage trees are tens of MB.
+        # We keep the small (~MB) hives for the artifact upload below.
+        run: |
+          rm -rf reactos-livecd.7z livecd-stage-1 livecd-stage-2
+          du -sh testdata/real/
+
+      # ---------- 5. Upload real hives ----------
+      - name: Upload real hives (for local debugging)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reactos-real-hives
+          path: testdata/real/
+          if-no-files-found: warn
+          retention-days: 7
