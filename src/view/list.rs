@@ -28,7 +28,7 @@ pub fn run(path: &Path, key_path: Option<&str>, format_flag: OutputFormat) -> Re
     let entries = collect_entries(&target)?;
 
     let stats = ListStats {
-        base: Stats::from_hive(path, file_size),
+        base: Stats::from_hive(path, file_size, hive.minor_version()),
         at: target_name.to_string(),
         total_entries: entries.len(),
         entries,

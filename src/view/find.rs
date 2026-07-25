@@ -46,7 +46,7 @@ pub fn run(
     )?;
 
     let stats = FindStats {
-        base: Stats::from_hive(path, file_size),
+        base: Stats::from_hive(path, file_size, hive.minor_version()),
         patterns,
         max_depth,
         matches,

@@ -184,7 +184,7 @@ fn info_emits_valid_json_in_json_mode() {
         "path",
         "file_size_bytes",
         "root_subkey_count",
-        "minor_version_known",
+        "minor_version",
     ] {
         assert!(
             obj.contains_key(required),
@@ -196,7 +196,7 @@ fn info_emits_valid_json_in_json_mode() {
     // Sanity-checks against the testhive fixture (159744 bytes, 5 root subkeys).
     assert_eq!(obj["file_size_bytes"].as_u64(), Some(159744));
     assert_eq!(obj["root_subkey_count"].as_u64(), Some(5));
-    assert_eq!(obj["minor_version_known"].as_bool(), Some(false));
+    assert_eq!(obj["minor_version"].as_u64(), Some(5));
 }
 
 #[test]
@@ -373,13 +373,7 @@ fn tree_emits_well_formed_json_with_recursive_subkeys() {
     let obj = value
         .as_object()
         .expect("top-level JSON should be an object");
-    for required in [
-        "path",
-        "file_size_bytes",
-        "parsed_ok",
-        "depth_limit",
-        "tree",
-    ] {
+    for required in ["path", "file_size_bytes", "depth_limit", "tree"] {
         assert!(
             obj.contains_key(required),
             "JSON payload missing `{required}`",
