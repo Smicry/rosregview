@@ -177,17 +177,17 @@ jobs:
       - name: Build rosregview (release)
         run: cargo build --release --locked --verbose
 
-      - name: Smoke: info on real SYSTEM and SOFTWARE
+      - name: "Smoke: info on real SYSTEM and SOFTWARE"
         run: |
           ./target/release/rosregview info testdata/real/SYSTEM
           echo "---"
           ./target/release/rosregview info testdata/real/SOFTWARE
 
-      - name: Smoke: tree --depth 2 on SOFTWARE
+      - name: "Smoke: tree --depth 2 on SOFTWARE"
         run: |
           ./target/release/rosregview tree --depth 2 testdata/real/SOFTWARE | head -40
 
-      - name: Smoke: show all values of a well-known key
+      - name: "Smoke: show all values of a well-known key"
         # `rosregview show` takes the hive file as the first positional
         # and the key path as a second positional (no --path flag, no
         # --value filter — the command lists every value of the key).
@@ -210,7 +210,7 @@ jobs:
             exit 1
           fi
 
-      - name: Smoke: JSON output is valid
+      - name: "Smoke: JSON output is valid"
         run: |
           ./target/release/rosregview info -f json testdata/real/SYSTEM \
             | python3 -c "import sys, json; json.load(sys.stdin); print('JSON OK')"
