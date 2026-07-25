@@ -1,10 +1,10 @@
 //! `gen-completions` — emit shell-completion scripts and a man page
-//! for `rosregview`. Built only when the `completions` Cargo feature
-//! is enabled:
+//! for `rosregview`. Always compiled; pull in the `clap_complete` and
+//! `clap_mangen` deps unconditionally (the savings of a feature flag
+//! would not justify the conditional-compile complexity at this scale).
 //!
 //! ```bash
-//! cargo run --features completions --bin gen-completions -- \
-//!     --outdir completions/
+//! cargo run --bin gen-completions -- --outdir .
 //! ```
 //!
 //! Output files (relative to `--outdir`):

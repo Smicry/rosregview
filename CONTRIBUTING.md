@@ -132,7 +132,8 @@ Currently the project has five (`info`, `tree`, `list`, `show`,
    - `#[cfg(test)] mod tests` with at least:
      - one happy-path test against `testdata/testhive`,
      - one error-path test (missing key, malformed input, etc).
-3. Wire the dispatch arm in `src/main.rs`.
+3. Wire the dispatch arm in `src/lib.rs` (`run()` function — the
+   `src/main.rs` binary is just a one-line caller).
 4. Update `README.md` "Usage" section.
 5. Add at least one integration test in `tests/integration.rs`.
 

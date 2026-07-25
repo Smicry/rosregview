@@ -1,7 +1,6 @@
 //! rosregview — Offline Windows registry hive viewer for ReactOS.
 //!
-//! See `Cargo.toml` for project metadata, and `rosregview-plan.md` in
-//! the repository root for the wider plan and design notes.
+//! See `Cargo.toml` for project metadata and `README.md` for usage.
 //!
 //! Subcommands currently implemented:
 //!   * `info <hive>`                  — overview + JSON via `-f json`
@@ -11,10 +10,10 @@
 //!   * `find <hive> [filters]`        — pattern search across the key tree
 //!
 //! The library exposes the modules that back the [`rosregview` binary]
-//! and the optional [`gen-completions`](src/bin/gen-completions.rs)
-//! helper. External consumers rarely want this; it's here so that
-//! `cargo build --features completions` can emit shell-completion
-//! scripts and a man page without re-declaring the CLI.
+//! and the [`gen-completions`](src/bin/gen-completions.rs) helper.
+//! External consumers rarely want this; it's here so the helper
+//! binary can reuse the `Cli` derive types when emitting
+//! shell-completion scripts and a man page without redeclaring them.
 
 pub mod cli;
 pub mod error;
