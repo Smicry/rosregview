@@ -229,7 +229,7 @@ fn walk_for_matches<'a>(
         });
     }
 
-    // Decend only while we're within the depth budget. depth_limit=0
+    // Descend only while we're within the depth budget. depth_limit=0
     // means: show only root, do not descend.
     if matches!(depth_limit, Some(limit) if depth >= limit) {
         return Ok(());

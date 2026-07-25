@@ -124,18 +124,17 @@ mod tests {
     use super::*;
 
     fn fixture_hive() -> Option<nt_hive::Hive<&'static [u8]>> {
-        // We have to leak the bytes to get a 'static lifetime, since
-        // the hive borrows from its byte buffer.
+        // Reuse the production `load_hive` helper rather than
+        // duplicating its `Box::leak` dance here — keeps the test
+        // fixture loader in sync with the real code path.
         let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("testdata")
             .join("testhive");
         if !p.is_file() {
             return None;
         }
-        let bytes = std::fs::read(&p).unwrap();
-        let boxed: Box<[u8]> = bytes.into_boxed_slice();
-        let leaked: &'static [u8] = Box::leak(boxed);
-        nt_hive::Hive::new(leaked).ok()
+        let (hive, _size) = crate::hive::open::load_hive(&p).ok()?;
+        Some(hive)
     }
 
     #[test]
