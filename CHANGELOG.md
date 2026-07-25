@@ -1,0 +1,97 @@
+# Changelog
+
+All notable changes to `rosregview` are documented here. The format is
+based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/).
+
+Commit messages follow the ReactOS convention:
+`[ROSREGVIEW] <imperative subject> (<PR-NUM>)`. The unreleased section
+collects commits by hand from `git log --grep='\[ROSREGVIEW\]'`.
+
+## [Unreleased]
+
+### Added
+- Split monolithic `src/main.rs` into focused modules:
+  `cli`, `error`, `hive/{mod,open,format}`, `view/{mod,info,tree,list,show,find}`,
+  `output/{mod,hex,json,table,value}`. (`da9fe69`)
+- 16 new unit tests across the new modules. The crate now has 36 unit
+  tests in addition to the existing 20 integration tests. (`da9fe69`)
+- CI gate: `cargo fmt --all -- --check` and
+  `cargo clippy --all-targets --locked -- -D warnings` on every PR. (`da9fe69`)
+- New `hive::open::load_hive` helper that centralises "read file → stat
+  → parse nt-hive" with a single set of error contexts. Uses
+  `Box::leak` to give the parsed `Hive` a `'static` lifetime so it can
+  be returned by value. (`da9fe69`)
+- `error::wrap_hive_error{, _owned}` helpers to keep the
+  `nt_hive::NtHiveError` → `anyhow::Error` boundary in one place. (`da9fe69`)
+- `output::value::{reg_type_label, format_value_data}` shared by
+  `view::show` and `view::find` so the value-type decoding logic is
+  defined exactly once. (`da9fe69`)
+
+### Changed
+- `view::show` no longer owns `reg_type_label` / `format_value_data` /
+  `decode_*` helpers; they moved to `output::value` and are imported
+  by both `show` and `find`. No behavior change. (`da9fe69`)
+- `tests/integration.rs` re-formatted with `cargo fmt` so the new
+  `cargo fmt --check` CI gate passes on the whole tree. (`da9fe69`)
+
+### Fixed
+- `clippy::useless_format` (2 sites) — replaced
+  `serde_json::Value::String(format!("<literal>"))` with the literal
+  string directly. (`da9fe69`)
+- `clippy::literal_with_empty_format_string` — `format!("{:02x}", b)`
+  → `format!("{b:02x}")`. (`da9fe69`)
+- `clippy::collapsible_if` — collapsed a nested `if` into a let-chain.
+  (`da9fe69`)
+
+## [0.1.0] — Phase 2 MVP
+
+### Added
+- `find` subcommand with `-n` (key-name substring, repeatable) and `-v`
+  (decoded value-data substring) filters, `--case-sensitive` and
+  `--max-depth` flags. (`168fc2d`)
+- README, `Cargo.toml`, and `main.rs` documentation audit. (`8c057b8`)
+- `show` subcommand: typed value display (`REG_SZ` decoded UTF-16,
+  `REG_DWORD`/`REG_QWORD` as dec+hex, `REG_MULTI_SZ` joined with
+  separator, `REG_BINARY` first-32-bytes hex dump + size summary) and
+  JSON output. (`d5459f0`)
+- Bump `actions/checkout` and `upload-artifact` to v7. (`653fdd9`)
+- `list` subcommand with positional `KEY_PATH` argument and `-f json`
+  output. (`8495601`)
+- `tree` subcommand with `--depth` flag and `-f json` output. (`0bf3e15`)
+- `-f` / `--format json` for `info` subcommand. (`72643c1`)
+- Bump `actions/*` to v5, add CI / license / rust badges to README.
+  (`b719af9`)
+- `find` matching is now against the *decoded* value data, so
+  `find -v 42` matches both the decimal and hex renderings of a
+  `REG_DWORD`. (`168fc2d`)
+
+### Changed
+- Drop unused `thiserror` dependency; the crate uses `anyhow` end-to-end.
+  (`97e2686`)
+- Re-rustfmt `tests/integration.rs` and tidy the `binary_path` helper.
+  (`80c7b65`)
+
+### Fixed
+- Make `zig` discoverable via `PATH` on the CI cross job. (`956045c`)
+- Pass `ZIG` env var explicitly to `cargo-zigbuild` in CI. (`7c415b0`)
+- Switch Windows smoke run to `pwsh` from `bash`. (`4f2c666`)
+- Fix Zig 0.16 tarball URL in CI install step. (`24e93c6`)
+
+## [0.0.1] — Phase 0.5 MVP smoke test
+
+### Added
+- GitHub Actions CI matrix covering Linux / macOS / Windows native
+  builds plus an `i686-pc-windows-gnu` cross-compile job via
+  `cargo-zigbuild`. (`4ce4206`)
+- `i686-pc-windows-gnu` cross-compile support via `cargo-zigbuild` to
+  sidestep Homebrew `mingw-w64@14`'s missing `_Unwind_Resume`. Produces
+  a 656 KB PE32 i386 `.exe` from macOS. (`c347f90`)
+- Initial commit: standalone Cargo workspace with the `info` subcommand,
+  `clap` derive, `anyhow` errors, GPL-2.0-or-later licensing, and the
+  bundled `testdata/testhive` fixture (159 KB real hive from
+  ColinFinck/nt-hive). (`72573f2`)
+
+[Unreleased]: https://github.com/Smicry/rosregview/compare/da9fe69...HEAD
+[0.1.0]: https://github.com/Smicry/rosregview/compare/72573f2...da9fe69
+[0.0.1]: https://github.com/Smicry/rosregview/releases/tag/72573f2
