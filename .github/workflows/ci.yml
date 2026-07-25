@@ -43,6 +43,12 @@ jobs:
         with:
           cache-on-failure: false
 
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --all-targets --locked -- -D warnings
+
       - name: Build
         run: cargo build --${{ matrix.profile }} --locked --verbose
 
