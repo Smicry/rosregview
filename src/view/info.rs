@@ -13,7 +13,7 @@ pub fn run(path: &Path, format: OutputFormat) -> Result<()> {
     let (hive, file_size) = open::load_hive(path)?;
     let subkey_count = count_root_subkeys(&hive);
 
-    let stats = Stats::from_hive(path, file_size);
+    let stats = Stats::from_hive(path, file_size, hive.minor_version());
     match format {
         OutputFormat::Human => render_human(&stats, subkey_count),
         OutputFormat::Json => render_json(&stats, subkey_count),
@@ -41,7 +41,10 @@ struct InfoPayload {
 fn render_human(stats: &Stats, subkey_count: usize) -> Result<()> {
     println!("File:           {}", stats.path);
     println!("Size:           {} bytes", stats.file_size_bytes);
-    println!("Parsed:         OK (nt-hive 0.3 accepted the file)");
+    println!(
+        "Parsed:         OK (nt-hive 0.3, minor version {})",
+        stats.minor_version
+    );
     println!("Root subkeys:   {subkey_count}");
     Ok(())
 }
@@ -51,8 +54,7 @@ fn render_json(stats: &Stats, subkey_count: usize) -> Result<()> {
         base: Stats {
             path: stats.path.clone(),
             file_size_bytes: stats.file_size_bytes,
-            parsed_ok: stats.parsed_ok,
-            minor_version_known: stats.minor_version_known,
+            minor_version: stats.minor_version,
         },
         root_subkey_count: subkey_count,
     };

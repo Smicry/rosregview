@@ -18,7 +18,7 @@ pub fn run(path: &Path, depth: Option<usize>, format: OutputFormat) -> Result<()
 
     let tree = build_tree(&root, "<root>", depth, 0)?;
     let stats = TreeStats {
-        base: Stats::from_hive(path, file_size),
+        base: Stats::from_hive(path, file_size, hive.minor_version()),
         depth_limit: depth,
         tree,
     };

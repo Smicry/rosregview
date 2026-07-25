@@ -23,19 +23,14 @@ mod tests {
         let stats = super::super::Stats {
             path: "x.hiv".into(),
             file_size_bytes: 42,
-            parsed_ok: true,
-            minor_version_known: false,
+            minor_version: 5,
         };
         let json: serde_json::Value = serde_json::to_value(&stats).unwrap();
         let obj = json.as_object().unwrap();
-        for required in [
-            "path",
-            "file_size_bytes",
-            "parsed_ok",
-            "minor_version_known",
-        ] {
+        for required in ["path", "file_size_bytes", "minor_version"] {
             assert!(obj.contains_key(required), "missing `{required}`");
         }
         assert_eq!(obj["file_size_bytes"].as_u64(), Some(42));
+        assert_eq!(obj["minor_version"].as_u64(), Some(5));
     }
 }
