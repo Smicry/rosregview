@@ -227,6 +227,36 @@ ship with the current ReactOS nightly.
 
 `Cargo.lock` pins exact versions for reproducibility.
 
+## Limitations
+
+`rosregview` is intentionally a thin read-only viewer. Things it does
+**not** do:
+
+- **Hive writes / edits.** No `set`, `delete`, or `import`. Use
+  `regedit` on a live system, or `offreg.dll` in Windows, for that.
+- **Transaction log replay.** `nt-hive` 0.3 reads the primary hive
+  only. The `.LOG` and `.LOG1`/`.LOG2` files are not consulted.
+  Corrupted-but-recoverable hives (e.g. after a power loss) may not
+  parse. See
+  [nt-hive#issues](https://github.com/ColinFinck/nt-hive/issues) for
+  the current recovery coverage.
+- **Registry value decoding** is best-effort. `REG_BINARY`, `REG_NONE`,
+  `REG_LINK`, `REG_RESOURCE_LIST`, `REG_FULL_RESOURCE_DESCRIPTOR`,
+  `REG_RESOURCE_REQUIREMENTS_LIST`, and unknown future codes render
+  as a hex dump. Strings are decoded as UTF-16-LE lossy (no
+  round-trip preservation).
+- **Registry path navigation** is case-insensitive at the byte level
+  (Latin-1 only). Unicode case folding beyond ASCII is approximate.
+- **No live registry API.** We only read hive *files*. To inspect a
+  running Windows or ReactOS installation, copy the hive files out
+  first (`%SystemRoot%\System32\config`).
+- **i686-pc-windows-gnu only.** We cross-compile to 32-bit Windows
+  via Zig. There is no `x86_64-pc-windows-gnu`, no MSVC target, no
+  ARM. Tracked separately; add a target as needed.
+
+If any of these is a blocker for your use case, file an issue with
+the specific scenario (hive path + subcommand + expected output).
+
 ## License
 
 GPL-2.0-or-later. See `LICENSE` for the full text. The full GPL-2.0

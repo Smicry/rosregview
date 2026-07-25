@@ -86,6 +86,23 @@ distribution license of the resulting binary is **GPL-2.0-or-later**.
   via `serde_json::from_slice`.
 - **License terms**: permissive dual MIT / Apache-2.0.
 
+### `clap_complete` 4.x — MIT OR Apache-2.0
+- **Repository**: <https://github.com/clap-rs/clap>
+- **Why we depend on it**: the `gen-completions` helper binary uses
+  `clap_complete::generate_to` to emit shell-completion scripts for
+  bash, zsh, fish, and PowerShell from the same `clap` derive types
+  the `rosregview` binary uses.
+- **License terms**: permissive dual MIT / Apache-2.0.
+- **Used only at**: `cargo run --bin gen-completions -- --outdir <DIR>`,
+  and in the `completions / drift check` CI job.
+
+### `clap_mangen` 0.3.x — MIT OR Apache-2.0
+- **Repository**: <https://github.com/clap-rs/clap>
+- **Why we depend on it**: the `gen-completions` helper binary emits
+  the `rosregview(1)` man page via `clap_mangen::Man`.
+- **License terms**: permissive dual MIT / Apache-2.0.
+- **Transitive dep**: [`roff`](https://crates.io/crates/roff) 1.x (MIT).
+
 ## Transitive dependencies
 
 Every transitive crate pulled in by the five direct deps above:
@@ -121,6 +138,7 @@ Every transitive crate pulled in by the five direct deps above:
 | `zerocopy` | 0.8.54 | BSD-2-Clause OR Apache-2.0 OR MIT |
 | `zerocopy-derive` | 0.8.54 (proc-macro) | BSD-2-Clause OR Apache-2.0 OR MIT |
 | `zmij` | 1.0.23 | MIT |
+| `roff` | 1.1.1 | MIT |
 
 (The two `syn` versions are both pulled in transitively — `serde_derive`
 and `thiserror-impl` require `syn` 2.x; `clap_derive` does too. Some
