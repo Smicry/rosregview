@@ -21,15 +21,31 @@ to the maintainer sent, awaiting reply.
 
 ### `info <hive> [-f json]` — overview
 
-Single-line summary: file size, root subkey count, parse status.
+Single-line summary: file size, root subkey count, hive minor version.
 
 ```text
 $ ./target/release/rosregview info testdata/testhive
 File:           testdata/testhive
 Size:           159744 bytes
-Parsed:         OK (nt-hive 0.3 accepted the file)
+Parsed:         OK (nt-hive 0.3, minor version 5)
 Root subkeys:   5
 ```
+
+The `minor version` number comes from the hive base block and maps to a
+known Windows release:
+
+| minor_version | Windows release |
+|---|---|
+| 0 | NT 3.1 Beta |
+| 1 | NT 3.1 |
+| 2 | NT 3.5 |
+| 3 | NT 4.0 |
+| 4 | XP Beta |
+| 5 | XP |
+| 6 | Vista / Server 2008+ |
+
+(Values outside this table are accepted by nt-hive but not assigned a
+friendly name; the raw integer is still emitted.)
 
 ### `tree <hive> [--depth N] [-f json]` — recursive key hierarchy
 

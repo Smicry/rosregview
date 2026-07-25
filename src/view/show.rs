@@ -4,8 +4,7 @@ use crate::cli::OutputFormat;
 use crate::error;
 use crate::hive::{format, open};
 use crate::output::{
-    Stats,
-    table::truncate_with_ellipsis,
+    Stats, truncate_with_ellipsis,
     value::{format_value_data, reg_type_label},
 };
 use anyhow::Result;

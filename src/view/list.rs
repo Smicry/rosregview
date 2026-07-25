@@ -3,7 +3,7 @@
 use crate::cli::OutputFormat;
 use crate::error;
 use crate::hive::{format, open};
-use crate::output::{Stats, table::truncate_with_ellipsis};
+use crate::output::{Stats, truncate_with_ellipsis};
 use anyhow::Result;
 use nt_hive::KeyNode;
 use serde::Serialize;

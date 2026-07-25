@@ -1,6 +1,7 @@
 //! `info` subcommand — one-line summary for a hive file.
 
 use crate::cli::OutputFormat;
+use crate::error;
 use crate::hive::open;
 use crate::output::Stats;
 use anyhow::Result;
@@ -11,7 +12,7 @@ use std::path::Path;
 /// Public entry point for the `info` subcommand.
 pub fn run(path: &Path, format: OutputFormat) -> Result<()> {
     let (hive, file_size) = open::load_hive(path)?;
-    let subkey_count = count_root_subkeys(&hive);
+    let subkey_count = count_root_subkeys(&hive)?;
 
     let stats = Stats::from_hive(path, file_size, hive.minor_version());
     match format {
@@ -20,15 +21,21 @@ pub fn run(path: &Path, format: OutputFormat) -> Result<()> {
     }
 }
 
-fn count_root_subkeys(hive: &Hive<&'static [u8]>) -> usize {
-    let root = match hive.root_key_node() {
-        Ok(r) => r,
-        Err(_) => return 0,
-    };
-    match root.subkeys() {
+fn count_root_subkeys(hive: &Hive<&'static [u8]>) -> Result<usize> {
+    let root = hive
+        .root_key_node()
+        .map_err(|e| error::wrap_hive_error(e, "hive has no readable root key node"))?;
+    let count = match root.subkeys() {
         Some(Ok(iter)) => iter.count(),
-        _ => 0,
-    }
+        Some(Err(e)) => {
+            return Err(error::wrap_hive_error_owned(
+                e,
+                "malformed subkey index at root".to_string(),
+            ));
+        }
+        None => 0,
+    };
+    Ok(count)
 }
 
 #[derive(Debug, Serialize)]
@@ -83,6 +90,6 @@ mod tests {
         // Use the public `load_hive` helper to get a 'static Hive.
         let (hive, _size) = open::load_hive(&p).unwrap();
         // The bundled nt-hive test fixture has exactly 5 root subkeys.
-        assert_eq!(count_root_subkeys(&hive), 5);
+        assert_eq!(count_root_subkeys(&hive).unwrap(), 5);
     }
 }
