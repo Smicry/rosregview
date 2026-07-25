@@ -140,21 +140,14 @@ fn decode_raw_bytes<'a>(val: &KeyValue<'a, &'a [u8]>) -> (String, serde_json::Va
     };
 
     const SHOW_BYTES: usize = 32;
-    let (preview_text, more) = if bytes.len() <= SHOW_BYTES {
-        (hex_dump(&bytes), None)
+    let preview_text = if bytes.len() <= SHOW_BYTES {
+        hex_dump(&bytes)
     } else {
-        (
+        format!(
+            "{} … ({} more bytes)",
             hex_dump(&bytes[..SHOW_BYTES]),
-            Some((
-                bytes.len() - SHOW_BYTES,
-                format!("… ({} more bytes)", bytes.len() - SHOW_BYTES),
-            )),
+            bytes.len() - SHOW_BYTES
         )
-    };
-    let preview_text = if let Some((_, suffix)) = more {
-        format!("{preview_text} {suffix}")
-    } else {
-        preview_text
     };
 
     let json = serde_json::Value::Array(

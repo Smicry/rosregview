@@ -111,10 +111,10 @@ fn read_values<'a>(target: &nt_hive::KeyNode<'a, &'a [u8]>) -> Result<Vec<ValueE
     Ok(out)
 }
 
-/// Decode a key value into a textual representation AND a structured
-/// JSON value. The textual one is used by the human sink, the
-/// structured one by the JSON sink. Both are produced from a single
-/// read of the hive so a corrupt big-data cell only gets walked once.
+/// Human-readable sink: aligned `Name | Type | Data` columns plus a
+/// total footer. Each entry's `data_human` is pre-decoded by
+/// `read_values` (via `output::value::format_value_data`), so this
+/// function only handles layout — no hive decoding happens here.
 fn render_human(stats: &ShowStats) -> Result<()> {
     println!("File:    {}", stats.base.path);
     println!("At:      {}", stats.at);
@@ -181,9 +181,13 @@ mod tests {
     }
 
     #[test]
-    fn empty_value_name_renders_as_default() {
-        // The empty-name convention is "<default>" — verified here so
-        // future refactors don't drop it.
+    fn read_values_promotes_empty_name_to_default_placeholder() {
+        // `read_values` promotes any empty value name to the
+        // "<default>" placeholder (see the `if name.is_empty()` branch
+        // above). The testhive fixture's `data-test` key has no actual
+        // (Default) value, so we can't exercise a real (Default)
+        // decode here — but we CAN verify the promotion invariant
+        // holds: no entry in the output should carry an empty name.
         let p = fixture_path();
         if !p.is_file() {
             eprintln!("skipping: {} not found", p.display());
@@ -191,12 +195,9 @@ mod tests {
         }
         let (hive, _size) = open::load_hive(&p).unwrap();
         let root = hive.root_key_node().unwrap();
-        // data-test has no (Default) value in the fixture; we just sanity-
-        // check that the helper logic works on whatever is there.
         let target = format::find_subpath(&root, "data-test").unwrap();
         let entries = read_values(&target).unwrap();
         for e in &entries {
-            // No entry should have an empty name (we promote to "<default>").
             assert!(!e.name.is_empty(), "found empty entry name: {e:?}");
         }
     }
