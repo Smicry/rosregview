@@ -103,14 +103,21 @@ fn render_human(stats: &TreeStats) -> Result<()> {
         println!("Depth:    unlimited");
     }
     println!();
-    print_tree_node(&stats.tree, 0);
+    // Build the whole tree into a single String and print once —
+    // one println! per node flushes stdout tens of thousands of times
+    // on large hives.
+    let mut out = String::new();
+    render_tree_to_string(&stats.tree, 0, &mut out);
+    print!("{out}");
     Ok(())
 }
 
-fn print_tree_node(node: &KeyTreeNode, depth: usize) {
-    println!("{}{}", "  ".repeat(depth), node.name);
+fn render_tree_to_string(node: &KeyTreeNode, depth: usize, out: &mut String) {
+    out.push_str(&"  ".repeat(depth));
+    out.push_str(&node.name);
+    out.push('\n');
     for child in &node.subkeys {
-        print_tree_node(child, depth + 1);
+        render_tree_to_string(child, depth + 1, out);
     }
 }
 

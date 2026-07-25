@@ -12,7 +12,7 @@
 use nt_hive::{KeyValue, KeyValueData, KeyValueDataType, RegMultiSZStrings};
 
 use crate::output::hex::hex_dump;
-use crate::output::table::truncate_with_ellipsis;
+use crate::output::truncate_with_ellipsis;
 
 /// Map an `nt_hive::KeyValueDataType` to its user-facing REG_* name.
 pub(crate) fn reg_type_label(t: KeyValueDataType) -> &'static str {
@@ -94,14 +94,15 @@ fn decode_qword(n: u64) -> (String, serde_json::Value) {
 
 fn decode_multi_string<'a>(iter: RegMultiSZStrings<'a, &'a [u8]>) -> (String, serde_json::Value) {
     let mut lines: Vec<String> = Vec::new();
+    let mut errors = 0;
     for r in iter {
         match r {
             Ok(s) => lines.push(s.trim_end_matches('\0').to_string()),
-            Err(e) => {
-                return (
-                    format!("<multi-sz decode error: {e:?}>"),
-                    serde_json::Value::String("<decode error>".to_string()),
-                );
+            Err(_) => {
+                // Best-effort: skip the bad entry and keep collecting
+                // the rest, matching decode_raw_bytes's strategy.
+                // Bail-on-first-error would discard already-good lines.
+                errors += 1;
             }
         }
     }
@@ -112,9 +113,18 @@ fn decode_multi_string<'a>(iter: RegMultiSZStrings<'a, &'a [u8]>) -> (String, se
             .collect(),
     );
     let display = if lines.is_empty() {
-        "<empty>".to_string()
+        if errors > 0 {
+            format!("<multi-sz: {errors} unparseable entry/entries>")
+        } else {
+            "<empty>".to_string()
+        }
     } else {
-        lines.join("  |  ")
+        let base = lines.join("  |  ");
+        if errors > 0 {
+            format!("{base}  |  <+{errors} unparseable>")
+        } else {
+            base
+        }
     };
     (truncate_with_ellipsis(&display, 80), json)
 }

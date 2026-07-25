@@ -187,31 +187,43 @@ fn walk_for_matches<'a>(
     // Compute value matches first so we always collect them when they
     // exist, regardless of whether the name filter matched.
     let mut matched_values = Vec::new();
-    if patterns.value.is_some()
-        && let Some(Ok(iter)) = node.values()
-    {
-        for val_result in iter {
-            let val = match val_result {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            let val_name = match val.name() {
-                Ok(n) => n.to_string_lossy(),
-                Err(_) => continue,
-            };
-            let reg_type = match val.data_type() {
-                Ok(t) => reg_type_label(t).to_string(),
-                Err(_) => "REG_UNKNOWN".to_string(),
-            };
-            let (data_human, _) = format_value_data(&val, &reg_type);
+    if patterns.value.is_some() {
+        match node.values() {
+            Some(Ok(iter)) => {
+                for val_result in iter {
+                    let val = match val_result {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+                    let val_name = match val.name() {
+                        Ok(n) => n.to_string_lossy(),
+                        Err(_) => continue,
+                    };
+                    let reg_type = match val.data_type() {
+                        Ok(t) => reg_type_label(t).to_string(),
+                        Err(_) => "REG_UNKNOWN".to_string(),
+                    };
+                    let (data_human, _) = format_value_data(&val, &reg_type);
 
-            if patterns.matches_value(&val_name) || patterns.matches_value(&data_human) {
-                matched_values.push(ValueMatchHint {
-                    name: val_name,
-                    reg_type,
-                    preview: data_human,
-                });
+                    if patterns.matches_value(&val_name) || patterns.matches_value(&data_human) {
+                        matched_values.push(ValueMatchHint {
+                            name: val_name,
+                            reg_type,
+                            preview: data_human,
+                        });
+                    }
+                }
             }
+            Some(Err(_)) => {
+                // Malformed value list — warn so the user understands
+                // why `-v` produced no matches at this key. find stays
+                // best-effort (does not abort), consistent with its
+                // tolerant handling of per-value errors above.
+                eprintln!(
+                    "rosregview: warning: malformed value list at `{path_label}` — value search skipped here"
+                );
+            }
+            None => {} // No value list on this key — normal for leaf keys.
         }
     }
 
