@@ -42,9 +42,6 @@ jobs:
     name: real ReactOS LiveCD hive smoke
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # The nightly mirror is external infrastructure. Keep scheduled/manual
-    # runs strict, but do not block source PRs when the mirror or DNS is down.
-    continue-on-error: ${{ github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -79,24 +76,38 @@ jobs:
           #      5th dash-separated field — that's the dev number
           #      (`...-dev-8638-...`), which is monotonically increasing
           #      within each version branch.
+          if ! PAGE=$(curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
+              "${REACTOS_LIVECD_DIR}"); then
+            if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+              echo "::warning::ReactOS LiveCD mirror is unavailable; skipping external smoke test"
+              echo "SKIP_REAL_HIVES=1" >> "${GITHUB_ENV}"
+              exit 0
+            fi
+            exit 1
+          fi
           URL=$(
-            curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
-              "${REACTOS_LIVECD_DIR}" \
+            printf '%s' "${PAGE}" \
               | grep -oE 'href="reactos-livecd-[^"]+x86-gcc-lin-dbg\.7z"' \
               | sed 's/^href="//; s/"$//' \
               | grep -- '-dev-' \
               | sort -t- -k5 -V -u \
-              | tail -1
+              | tail -1 \
+              || true
           )
           if [ -z "${URL}" ]; then
-            echo "::error::could not discover a LiveCD 7z URL at ${REACTOS_LIVECD_DIR}" >&2
+            if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+              echo "::warning::no LiveCD URL found; skipping external smoke test"
+              echo "SKIP_REAL_HIVES=1" >> "${GITHUB_ENV}"
+              exit 0
+            fi
+            echo "::error::could not discover a LiveCD 7z URL at ${REACTOS_LIVECD_DIR}"
             exit 1
           fi
           echo "url=${REACTOS_LIVECD_DIR}${URL}" >> "${GITHUB_OUTPUT}"
           echo "basename=${URL}" >> "${GITHUB_OUTPUT}"
 
       - name: Download ReactOS LiveCD 7z
-        if: steps.cache-iso.outputs.cache-hit != 'true'
+        if: steps.cache-iso.outputs.cache-hit != 'true' && env.SKIP_REAL_HIVES != '1'
         run: |
           set -euo pipefail
           curl -fL --retry 5 --retry-all-errors --connect-timeout 15 \
@@ -105,14 +116,17 @@ jobs:
 
       # ---------- 2. Extract hives ----------
       - name: Install 7zip
+        if: env.SKIP_REAL_HIVES != '1'
         run: sudo apt-get update && sudo apt-get install -y p7zip-full
 
       - name: List 7z contents (debug visibility)
+        if: env.SKIP_REAL_HIVES != '1'
         # Surface the archive layout in the job log so future path
         # changes are easy to diagnose without re-running locally.
         run: 7z l reactos-livecd.7z | tail -40
 
       - name: Extract 7z → ISO
+        if: env.SKIP_REAL_HIVES != '1'
         # The 7z wraps an ISO image. We extract once to get the ISO,
         # then mount/extract the ISO to reach the hive files.
         run: |
@@ -121,6 +135,7 @@ jobs:
           ls -la livecd-stage-1/
 
       - name: Extract ISO → hive files
+        if: env.SKIP_REAL_HIVES != '1'
         # 7z can extract ISO9660 images directly. Hives live under
         # reactos/system32/config/ — we discover them by name to stay
         # robust against small layout changes between ReactOS versions.
@@ -138,6 +153,7 @@ jobs:
 
       - name: Locate real hives
         id: locate
+        if: env.SKIP_REAL_HIVES != '1'
         run: |
           set -euo pipefail
           mkdir -p testdata/real
@@ -172,33 +188,41 @@ jobs:
 
       # ---------- 3. Build + smoke ----------
       - name: Install Rust toolchain (stable)
+        if: env.SKIP_REAL_HIVES != '1'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo target
+        if: env.SKIP_REAL_HIVES != '1'
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: false
 
       - name: Check formatting
+        if: env.SKIP_REAL_HIVES != '1'
         run: cargo fmt --all -- --check
 
       - name: Clippy (deny warnings)
+        if: env.SKIP_REAL_HIVES != '1'
         run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: Build rosregview (release)
+        if: env.SKIP_REAL_HIVES != '1'
         run: cargo build --release --locked --verbose
 
       - name: "Smoke: info on real SYSTEM and SOFTWARE"
+        if: env.SKIP_REAL_HIVES != '1'
         run: |
           ./target/release/rosregview info testdata/real/SYSTEM
           echo "---"
           ./target/release/rosregview info testdata/real/SOFTWARE
 
       - name: "Smoke: tree --depth 2 on SOFTWARE"
+        if: env.SKIP_REAL_HIVES != '1'
         run: |
           ./target/release/rosregview tree --depth 2 testdata/real/SOFTWARE | head -40
 
       - name: "Smoke: show all values of a well-known key"
+        if: env.SKIP_REAL_HIVES != '1'
         # `rosregview show` takes the hive file as the first positional
         # and the key path as a second positional (no --path flag, no
         # --value filter — the command lists every value of the key).
@@ -222,12 +246,14 @@ jobs:
           fi
 
       - name: "Smoke: JSON output is valid"
+        if: env.SKIP_REAL_HIVES != '1'
         run: |
           ./target/release/rosregview info -f json testdata/real/SYSTEM \
             | python3 -c "import sys, json; json.load(sys.stdin); print('JSON OK')"
 
       # ---------- 4. Cleanup intermediates ----------
       - name: Drop extracted archive (keep testdata/real)
+        if: env.SKIP_REAL_HIVES != '1'
         # The 7z + ISO + extraction stage trees are tens of MB.
         # We keep the small (~MB) hives for the artifact upload below.
         run: |
@@ -236,7 +262,7 @@ jobs:
 
       # ---------- 5. Upload real hives ----------
       - name: Upload real hives (for local debugging)
-        if: always()
+        if: always() && env.SKIP_REAL_HIVES != '1'
         uses: actions/upload-artifact@v7
         with:
           name: reactos-real-hives
