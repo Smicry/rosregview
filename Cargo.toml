@@ -2,6 +2,7 @@
 name = "rosregview"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.94"
 description = "Offline Windows registry hive viewer for ReactOS"
 license = "GPL-2.0-or-later"
 repository = "https://github.com/Smicry/rosregview"

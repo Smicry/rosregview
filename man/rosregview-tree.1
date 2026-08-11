@@ -1,0 +1,32 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH rosregview-tree 1  "rosregview-tree "
+.SH NAME
+rosregview\-tree \- Recursively print the key tree of a hive file (uses ASCII\-only indent)
+.SH SYNOPSIS
+\fBrosregview tree\fR [\fB\-d\fR|\fB\-\-depth\fR] [\fB\-f\fR|\fB\-\-format\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIPATH\fR>
+.SH DESCRIPTION
+Recursively print the key tree of a hive file (uses ASCII\-only indent)
+.SH OPTIONS
+.TP
+\fB\-d\fR, \fB\-\-depth\fR \fI<N>\fR
+Maximum recursion depth. 0 = show only the root, 1 = root + direct children, 2 = up to grand\-children, ... Default: unlimited
+.TP
+\fB\-f\fR, \fB\-\-format\fR \fI<FORMAT>\fR [default: human]
+Output format (`human` is the indented text tree, `json` is machine\-readable)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+human
+.IP \(bu 2
+json
+.RE
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIPATH\fR>
+Path to a .hiv file (Windows registry configuration unit)

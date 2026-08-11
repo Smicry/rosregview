@@ -4,8 +4,9 @@ use crate::cli::OutputFormat;
 use crate::error;
 use crate::hive::{format, open};
 use crate::output::{
-    Stats, truncate_with_ellipsis,
+    Stats, escape_control_chars, truncate_with_ellipsis,
     value::{format_value_data, reg_type_label},
+    write_stdout,
 };
 use anyhow::Result;
 use serde::Serialize;
@@ -13,28 +14,26 @@ use std::path::Path;
 
 /// Public entry point for the `show` subcommand.
 pub fn run(path: &Path, key_path: Option<&str>, format_flag: OutputFormat) -> Result<()> {
-    let (hive, file_size) = open::load_hive(path)?;
-    let root = hive
-        .root_key_node()
-        .map_err(|e| error::wrap_hive_error(e, "hive has no root key node"))?;
-
-    let target = match key_path {
-        None | Some("") | Some(".") => root,
-        Some(p) => format::find_subpath(&root, p)?,
-    };
     let target_name: &str = match key_path {
         None | Some("") | Some(".") => "<root>",
         Some(p) => p,
     };
-
-    let entries = read_values(&target)?;
-
-    let stats = ShowStats {
-        base: Stats::from_hive(path, file_size, hive.minor_version()),
-        at: target_name.to_string(),
-        total_values: entries.len(),
-        entries,
-    };
+    let stats = open::with_hive(path, |hive, file_size| {
+        let root = hive
+            .root_key_node()
+            .map_err(|e| error::wrap_hive_error(e, "hive has no root key node"))?;
+        let target = match key_path {
+            None | Some("") | Some(".") => root,
+            Some(p) => format::find_subpath(&root, p)?,
+        };
+        let entries = read_values(&target, format_flag == OutputFormat::Json)?;
+        Ok(ShowStats {
+            base: Stats::from_hive(path, file_size, hive.minor_version()),
+            at: target_name.to_string(),
+            total_values: entries.len(),
+            entries,
+        })
+    })?;
 
     match format_flag {
         OutputFormat::Human => render_human(&stats),
@@ -68,7 +67,10 @@ struct ShowStats {
 /// type. On a partial decode failure, we still return *something*
 /// rather than aborting the whole listing — a single corrupt value
 /// should not take down the rest.
-fn read_values<'a>(target: &nt_hive::KeyNode<'a, &'a [u8]>) -> Result<Vec<ValueEntry>> {
+fn read_values<'a>(
+    target: &nt_hive::KeyNode<'a, &'a [u8]>,
+    include_json: bool,
+) -> Result<Vec<ValueEntry>> {
     let iter = match target.values() {
         Some(Ok(iter)) => iter,
         Some(Err(e)) => {
@@ -99,12 +101,13 @@ fn read_values<'a>(target: &nt_hive::KeyNode<'a, &'a [u8]>) -> Result<Vec<ValueE
             Err(_) => "REG_UNKNOWN".to_string(),
         };
 
-        let (data_human, data_json) = format_value_data(&val, &reg_type);
+        let formatted = format_value_data(&val, &reg_type, include_json)
+            .map_err(|e| e.context(format!("failed to decode value `{name}`")))?;
         out.push(ValueEntry {
             name,
             reg_type,
-            data_human,
-            data_json,
+            data_human: formatted.human,
+            data_json: formatted.json,
         });
     }
     Ok(out)
@@ -115,27 +118,33 @@ fn read_values<'a>(target: &nt_hive::KeyNode<'a, &'a [u8]>) -> Result<Vec<ValueE
 /// `read_values` (via `output::value::format_value_data`), so this
 /// function only handles layout — no hive decoding happens here.
 fn render_human(stats: &ShowStats) -> Result<()> {
-    println!("File:    {}", stats.base.path);
-    println!("At:      {}", stats.at);
-    println!();
-    println!("{:<32}  {:<24}  Data", "Name", "Type");
-    println!("{}", "─".repeat(86));
-    for entry in &stats.entries {
-        println!(
-            "{:<32}  {:<24}  {}",
-            truncate_with_ellipsis(&entry.name, 32),
-            entry.reg_type,
-            entry.data_human
-        );
-    }
-    println!();
-    println!("Total: {} values", stats.total_values);
-    Ok(())
+    write_stdout(|out| {
+        writeln!(out, "File:    {}", escape_control_chars(&stats.base.path))?;
+        writeln!(out, "At:      {}", escape_control_chars(&stats.at))?;
+        writeln!(out)?;
+        writeln!(out, "{:<32}  {:<24}  Data", "Name", "Type")?;
+        writeln!(out, "{}", "─".repeat(86))?;
+        for entry in &stats.entries {
+            writeln!(
+                out,
+                "{:<32}  {:<24}  {}",
+                truncate_with_ellipsis(&escape_control_chars(&entry.name), 32),
+                entry.reg_type,
+                escape_control_chars(&entry.data_human)
+            )?;
+        }
+        writeln!(out)?;
+        writeln!(out, "Total: {} values", stats.total_values)?;
+        Ok(())
+    })
 }
 
 fn render_json(stats: &ShowStats) -> Result<()> {
-    println!("{}", serde_json::to_string_pretty(stats)?);
-    Ok(())
+    let json = serde_json::to_string_pretty(stats)?;
+    write_stdout(|out| {
+        writeln!(out, "{json}")?;
+        Ok(())
+    })
 }
 
 #[cfg(test)]
@@ -157,26 +166,25 @@ mod tests {
             eprintln!("skipping: {} not found", p.display());
             return;
         }
-        let (hive, _size) = open::load_hive(&p).unwrap();
-        let root = hive.root_key_node().unwrap();
-        // Navigate root → data-test
-        let target = format::find_subpath(&root, "data-test").unwrap();
-        let entries = read_values(&target).unwrap();
-        assert_eq!(entries.len(), 9);
-        let by_name: std::collections::HashMap<String, &ValueEntry> =
-            entries.iter().map(|e| (e.name.clone(), e)).collect();
-        // REG_SZ value named "reg-sz" decodes to "sz-test"
-        let sz = by_name.get("reg-sz").expect("missing reg-sz");
-        assert_eq!(sz.reg_type, "REG_SZ");
-        assert_eq!(sz.data_json.as_str(), Some("sz-test"));
-        // REG_DWORD value 42 is a native JSON number
-        let dw = by_name.get("dword").expect("missing dword");
-        assert_eq!(dw.reg_type, "REG_DWORD");
-        assert_eq!(dw.data_json.as_u64(), Some(42));
-        // REG_QWORD max
-        let qw = by_name.get("qword").expect("missing qword");
-        assert_eq!(qw.reg_type, "REG_QWORD");
-        assert_eq!(qw.data_json.as_u64(), Some(u64::MAX));
+        open::with_hive(&p, |hive, _size| {
+            let root = hive.root_key_node().unwrap();
+            let target = format::find_subpath(&root, "data-test").unwrap();
+            let entries = read_values(&target, true).unwrap();
+            assert_eq!(entries.len(), 9);
+            let by_name: std::collections::HashMap<String, &ValueEntry> =
+                entries.iter().map(|e| (e.name.clone(), e)).collect();
+            let sz = by_name.get("reg-sz").expect("missing reg-sz");
+            assert_eq!(sz.reg_type, "REG_SZ");
+            assert_eq!(sz.data_json.as_str(), Some("sz-test"));
+            let dw = by_name.get("dword").expect("missing dword");
+            assert_eq!(dw.reg_type, "REG_DWORD");
+            assert_eq!(dw.data_json.as_u64(), Some(42));
+            let qw = by_name.get("qword").expect("missing qword");
+            assert_eq!(qw.reg_type, "REG_QWORD");
+            assert_eq!(qw.data_json.as_u64(), Some(u64::MAX));
+            Ok(())
+        })
+        .unwrap();
     }
 
     #[test]
@@ -192,13 +200,16 @@ mod tests {
             eprintln!("skipping: {} not found", p.display());
             return;
         }
-        let (hive, _size) = open::load_hive(&p).unwrap();
-        let root = hive.root_key_node().unwrap();
-        let target = format::find_subpath(&root, "data-test").unwrap();
-        let entries = read_values(&target).unwrap();
-        for e in &entries {
-            assert!(!e.name.is_empty(), "found empty entry name: {e:?}");
-        }
+        open::with_hive(&p, |hive, _size| {
+            let root = hive.root_key_node().unwrap();
+            let target = format::find_subpath(&root, "data-test").unwrap();
+            let entries = read_values(&target, true).unwrap();
+            for e in &entries {
+                assert!(!e.name.is_empty(), "found empty entry name: {e:?}");
+            }
+            Ok(())
+        })
+        .unwrap();
     }
 
     #[test]
@@ -211,14 +222,16 @@ mod tests {
             eprintln!("skipping: {} not found", p.display());
             return;
         }
-        let (hive, _size) = open::load_hive(&p).unwrap();
-        let root = hive.root_key_node().unwrap();
-        let target = format::find_subpath(&root, "data-test").unwrap();
-        for val in target.values().unwrap().unwrap() {
-            let v = val.unwrap();
-            let (_, json) = format_value_data(&v, "REG_DEFINITELY_NOT_REAL");
-            // Whatever the bytes are, we get back a JSON array.
-            assert!(json.is_array());
-        }
+        open::with_hive(&p, |hive, _size| {
+            let root = hive.root_key_node().unwrap();
+            let target = format::find_subpath(&root, "data-test").unwrap();
+            for val in target.values().unwrap().unwrap() {
+                let v = val.unwrap();
+                let formatted = format_value_data(&v, "REG_DEFINITELY_NOT_REAL", true).unwrap();
+                assert!(formatted.json.is_array());
+            }
+            Ok(())
+        })
+        .unwrap();
     }
 }

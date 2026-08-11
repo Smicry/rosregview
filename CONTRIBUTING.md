@@ -158,7 +158,7 @@ Currently the project has five (`info`, `tree`, `list`, `show`,
 | Unit | Per-module logic in isolation | `#[cfg(test)] mod tests` in every `src/**/*.rs` |
 | Integration | End-to-end binary invocation against `testdata/testhive` | `tests/integration.rs` |
 | Cross-compile | `i686-pc-windows-gnu` PE32 .exe is valid | `windows_exe_artifact_is_valid_pe32_when_present` (skipped if no .exe) |
-| Real hives (planned) | Extract ReactOS LiveCD SYSTEM/SOFTWARE/SAM with `7z`, smoke-test against them | `.github/workflows/real-hives.yml` |
+| Real hives | Extract ReactOS LiveCD SYSTEM/SOFTWARE/SAM with `7z`, smoke-test against them | `.github/workflows/real-hives.yml` |
 
 Adding a new unit test is cheaper than adding a new integration test
 because unit tests run in milliseconds and don't require the binary

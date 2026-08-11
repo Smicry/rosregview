@@ -1,0 +1,29 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH rosregview-info 1  "rosregview-info "
+.SH NAME
+rosregview\-info \- Show a one\-line summary for a hive file: size, root subkey count
+.SH SYNOPSIS
+\fBrosregview info\fR [\fB\-f\fR|\fB\-\-format\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIPATH\fR>
+.SH DESCRIPTION
+Show a one\-line summary for a hive file: size, root subkey count
+.SH OPTIONS
+.TP
+\fB\-f\fR, \fB\-\-format\fR \fI<FORMAT>\fR [default: human]
+Output format (`human` is the default table, `json` is machine\-readable)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+human
+.IP \(bu 2
+json
+.RE
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIPATH\fR>
+Path to a .hiv file (Windows registry configuration unit)
