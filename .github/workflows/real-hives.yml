@@ -42,6 +42,9 @@ jobs:
     name: real ReactOS LiveCD hive smoke
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # The nightly mirror is external infrastructure. Keep scheduled/manual
+    # runs strict, but do not block source PRs when the mirror or DNS is down.
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -53,6 +56,9 @@ jobs:
           path: reactos-livecd.7z
           # Bumping this key (or touching the workflow file) re-downloads.
           key: reactos-livecd-v2-${{ github.event_name }}-${{ github.event_name == 'pull_request' && hashFiles('.github/workflows/real-hives.yml') || github.run_id }}
+          restore-keys: |
+            reactos-livecd-v2-pull_request-
+            reactos-livecd-v1-
 
       - name: Discover latest x86 LiveCD archive URL
         id: discover
@@ -74,7 +80,8 @@ jobs:
           #      (`...-dev-8638-...`), which is monotonically increasing
           #      within each version branch.
           URL=$(
-            curl -fsSL "${REACTOS_LIVECD_DIR}" \
+            curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
+              "${REACTOS_LIVECD_DIR}" \
               | grep -oE 'href="reactos-livecd-[^"]+x86-gcc-lin-dbg\.7z"' \
               | sed 's/^href="//; s/"$//' \
               | grep -- '-dev-' \
@@ -92,7 +99,8 @@ jobs:
         if: steps.cache-iso.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
-          curl -fL --retry 3 -o reactos-livecd.7z "${{ steps.discover.outputs.url }}"
+          curl -fL --retry 5 --retry-all-errors --connect-timeout 15 \
+            -o reactos-livecd.7z "${{ steps.discover.outputs.url }}"
           ls -lh reactos-livecd.7z
 
       # ---------- 2. Extract hives ----------
