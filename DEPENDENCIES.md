@@ -13,7 +13,7 @@ toolchain handy.
 
 ## Why we care
 
-`rosregview` is dual-licensed under **GPL-2.0-or-later** because the
+`rosregview` is licensed under **GPL-2.0-or-later** because the
 core dependency [`nt-hive`](#nt-hive-030) is GPL-2.0-or-later. GPL-2.0
 is copyleft and propagates through derivative works, so we have to
 make sure every dependency is *compatible* with GPL-2.0-or-later — i.e.
@@ -105,7 +105,7 @@ distribution license of the resulting binary is **GPL-2.0-or-later**.
 
 ## Transitive dependencies
 
-Every transitive crate pulled in by the five direct deps above:
+Every transitive crate pulled in by the seven direct deps above:
 
 | Crate | Version | License |
 |---|---|---|
@@ -113,6 +113,8 @@ Every transitive crate pulled in by the five direct deps above:
 | `anstyle` | 1.0.14 | MIT OR Apache-2.0 |
 | `anstyle-parse` | 1.0.0 | MIT OR Apache-2.0 |
 | `anstyle-query` | 1.1.5 | MIT OR Apache-2.0 |
+| `anstyle-wincon` | 3.0.11 | MIT OR Apache-2.0 |
+| `autocfg` | 1.5.1 | MIT OR Apache-2.0 |
 | `bitflags` | 2.13.1 | MIT OR Apache-2.0 |
 | `clap_builder` | 4.6.2 | MIT OR Apache-2.0 |
 | `clap_derive` | 4.6.3 (proc-macro) | MIT OR Apache-2.0 |
@@ -124,6 +126,7 @@ Every transitive crate pulled in by the five direct deps above:
 | `itoa` | 1.0.18 | MIT OR Apache-2.0 |
 | `memchr` | 2.8.3 | Unlicense OR MIT |
 | `memoffset` | 0.9.1 | MIT |
+| `once_cell_polyfill` | 1.70.2 | MIT OR Apache-2.0 |
 | `proc-macro2` | 1.0.107 | MIT OR Apache-2.0 |
 | `quote` | 1.0.47 | MIT OR Apache-2.0 |
 | `serde_core` | 1.0.229 | MIT OR Apache-2.0 |
@@ -135,6 +138,8 @@ Every transitive crate pulled in by the five direct deps above:
 | `thiserror-impl` | 2.0.19 (proc-macro) | MIT OR Apache-2.0 |
 | `unicode-ident` | 1.0.24 | (MIT OR Apache-2.0) AND Unicode-3.0 |
 | `utf8parse` | 0.2.2 | Apache-2.0 OR MIT |
+| `windows-link` | 0.2.1 | MIT OR Apache-2.0 |
+| `windows-sys` | 0.61.2 | MIT OR Apache-2.0 |
 | `zerocopy` | 0.8.54 | BSD-2-Clause OR Apache-2.0 OR MIT |
 | `zerocopy-derive` | 0.8.54 (proc-macro) | BSD-2-Clause OR Apache-2.0 OR MIT |
 | `zmij` | 1.0.23 | MIT |

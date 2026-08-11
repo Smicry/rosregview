@@ -3,25 +3,26 @@
 use crate::cli::OutputFormat;
 use crate::error;
 use crate::hive::open;
-use crate::output::Stats;
+use crate::output::{Stats, escape_control_chars, write_stdout};
 use anyhow::Result;
 use nt_hive::KeyNode;
 use serde::Serialize;
 use std::path::Path;
 
+const MAX_TRAVERSAL_DEPTH: usize = 512;
+
 /// Public entry point for the `tree` subcommand.
 pub fn run(path: &Path, depth: Option<usize>, format: OutputFormat) -> Result<()> {
-    let (hive, file_size) = open::load_hive(path)?;
-    let root = hive
-        .root_key_node()
-        .map_err(|e| error::wrap_hive_error(e, "hive has no root key node"))?;
-
-    let tree = build_tree(&root, "<root>", depth, 0)?;
-    let stats = TreeStats {
-        base: Stats::from_hive(path, file_size, hive.minor_version()),
-        depth_limit: depth,
-        tree,
-    };
+    let stats = open::with_hive(path, |hive, file_size| {
+        let root = hive
+            .root_key_node()
+            .map_err(|e| error::wrap_hive_error(e, "hive has no root key node"))?;
+        Ok(TreeStats {
+            base: Stats::from_hive(path, file_size, hive.minor_version()),
+            depth_limit: depth,
+            tree: build_tree(&root, "<root>", depth, 0)?,
+        })
+    })?;
 
     match format {
         OutputFormat::Human => render_human(&stats),
@@ -59,6 +60,11 @@ fn build_tree<'a>(
     depth_limit: Option<usize>,
     current_depth: usize,
 ) -> Result<KeyTreeNode> {
+    if current_depth > MAX_TRAVERSAL_DEPTH {
+        anyhow::bail!(
+            "registry key nesting exceeds the safety limit of {MAX_TRAVERSAL_DEPTH} levels"
+        );
+    }
     // Honor the depth limit *before* recursing into children.
     let reached_limit = matches!(depth_limit, Some(limit) if current_depth >= limit);
 
@@ -95,26 +101,29 @@ fn build_tree<'a>(
 }
 
 fn render_human(stats: &TreeStats) -> Result<()> {
-    println!("File:     {}", stats.base.path);
-    println!("Size:     {} bytes", stats.base.file_size_bytes);
-    if let Some(limit) = stats.depth_limit {
-        println!("Depth:    0..={limit}");
-    } else {
-        println!("Depth:    unlimited");
-    }
-    println!();
-    // Build the whole tree into a single String and print once —
-    // one println! per node flushes stdout tens of thousands of times
-    // on large hives.
     let mut out = String::new();
     render_tree_to_string(&stats.tree, 0, &mut out);
-    print!("{out}");
-    Ok(())
+    write_stdout(|writer| {
+        writeln!(
+            writer,
+            "File:     {}",
+            escape_control_chars(&stats.base.path)
+        )?;
+        writeln!(writer, "Size:     {} bytes", stats.base.file_size_bytes)?;
+        if let Some(limit) = stats.depth_limit {
+            writeln!(writer, "Depth:    0..={limit}")?;
+        } else {
+            writeln!(writer, "Depth:    unlimited")?;
+        }
+        writeln!(writer)?;
+        write!(writer, "{out}")?;
+        Ok(())
+    })
 }
 
 fn render_tree_to_string(node: &KeyTreeNode, depth: usize, out: &mut String) {
     out.push_str(&"  ".repeat(depth));
-    out.push_str(&node.name);
+    out.push_str(&escape_control_chars(&node.name));
     out.push('\n');
     for child in &node.subkeys {
         render_tree_to_string(child, depth + 1, out);
@@ -122,59 +131,56 @@ fn render_tree_to_string(node: &KeyTreeNode, depth: usize, out: &mut String) {
 }
 
 fn render_json(stats: &TreeStats) -> Result<()> {
-    println!("{}", serde_json::to_string_pretty(stats)?);
-    Ok(())
+    let json = serde_json::to_string_pretty(stats)?;
+    write_stdout(|out| {
+        writeln!(out, "{json}")?;
+        Ok(())
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn fixture_hive() -> Option<nt_hive::Hive<&'static [u8]>> {
-        // Reuse the production `load_hive` helper rather than
-        // duplicating its `Box::leak` dance here — keeps the test
-        // fixture loader in sync with the real code path.
-        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    fn fixture_path() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("testdata")
-            .join("testhive");
-        if !p.is_file() {
-            return None;
-        }
-        let (hive, _size) = crate::hive::open::load_hive(&p).ok()?;
-        Some(hive)
+            .join("testhive")
     }
 
     #[test]
     fn build_tree_depth_zero_has_no_children() {
-        let Some(hive) = fixture_hive() else {
+        let p = fixture_path();
+        if !p.is_file() {
             eprintln!("skipping: fixture not found");
             return;
-        };
-        let root = hive.root_key_node().unwrap();
-        let tree = build_tree(&root, "<root>", Some(0), 0).unwrap();
-        assert_eq!(tree.name, "<root>");
-        assert!(
-            tree.subkeys.is_empty(),
-            "depth=0 must yield no children, got {:?}",
-            tree.subkeys
-        );
+        }
+        open::with_hive(&p, |hive, _size| {
+            let root = hive.root_key_node().unwrap();
+            let tree = build_tree(&root, "<root>", Some(0), 0).unwrap();
+            assert_eq!(tree.name, "<root>");
+            assert!(tree.subkeys.is_empty());
+            Ok(())
+        })
+        .unwrap();
     }
 
     #[test]
     fn build_tree_depth_one_yields_direct_children_only() {
-        let Some(hive) = fixture_hive() else {
+        let p = fixture_path();
+        if !p.is_file() {
             eprintln!("skipping: fixture not found");
             return;
-        };
-        let root = hive.root_key_node().unwrap();
-        let tree = build_tree(&root, "<root>", Some(1), 0).unwrap();
-        assert!(!tree.subkeys.is_empty());
-        for child in &tree.subkeys {
-            assert!(
-                child.subkeys.is_empty(),
-                "depth=1 must yield direct children only; got grandchildren under `{}`",
-                child.name
-            );
         }
+        open::with_hive(&p, |hive, _size| {
+            let root = hive.root_key_node().unwrap();
+            let tree = build_tree(&root, "<root>", Some(1), 0).unwrap();
+            assert!(!tree.subkeys.is_empty());
+            for child in &tree.subkeys {
+                assert!(child.subkeys.is_empty());
+            }
+            Ok(())
+        })
+        .unwrap();
     }
 }

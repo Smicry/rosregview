@@ -27,6 +27,9 @@ env:
   CARGO_TERM_COLOR: always
   REACTOS_LIVECD_DIR: https://iso.reactos.org/livecd/
 
+permissions:
+  contents: read
+
 jobs:
   # ----------------------------------------------------------------------
   # Download the ReactOS LiveCD (the 7z archive from iso.reactos.org),
@@ -49,7 +52,7 @@ jobs:
         with:
           path: reactos-livecd.7z
           # Bumping this key (or touching the workflow file) re-downloads.
-          key: reactos-livecd-v1-${{ hashFiles('.github/workflows/real-hives.yml') }}
+          key: reactos-livecd-v2-${{ github.event_name }}-${{ github.event_name == 'pull_request' && hashFiles('.github/workflows/real-hives.yml') || github.run_id }}
 
       - name: Discover latest x86 LiveCD archive URL
         id: discover

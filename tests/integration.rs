@@ -19,7 +19,7 @@ fn binary_path() -> PathBuf {
     // workspace binary via `$CARGO_BIN_EXE_rosregview` when available
     // (cargo ≥1.73), falling back to a target-relative path otherwise so this
     // file works under plain `cargo test --tests` too.
-    if let Ok(exe) = std::env::var("CARGO_BIN_EXE_rosregview") {
+    if let Some(exe) = option_env!("CARGO_BIN_EXE_rosregview") {
         return PathBuf::from(exe);
     }
 
@@ -31,7 +31,10 @@ fn binary_path() -> PathBuf {
     } else {
         "release"
     };
-    manifest.join("target").join(profile).join("rosregview")
+    manifest
+        .join("target")
+        .join(profile)
+        .join(format!("rosregview{}", std::env::consts::EXE_SUFFIX))
 }
 
 /// Absolute path to the test hive, resolved relative to the workspace root.
@@ -827,6 +830,12 @@ fn find_filters_by_decoded_value_data() {
         stdout_d.contains("REG_DWORD"),
         "expected `REG_DWORD` in matched_values preview:\n{stdout_d}",
     );
+    for unexpected in ["<root>", "character-encoding-test", "subkey-test"] {
+        assert!(
+            !stdout_d.lines().any(|line| line.trim() == unexpected),
+            "value-only search must not include unrelated key `{unexpected}`:\n{stdout_d}",
+        );
+    }
     // `reg-sz` matches via decoded value data (substring "42" appears in
     // "reg-multi-sz-big" as a 0+1+2+3+4+5+...+n-th digit, but it's also
     // more obviously a substring of MULTI_SZ "multi-sz-test" when

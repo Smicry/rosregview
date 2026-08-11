@@ -1,0 +1,41 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH rosregview-find 1  "rosregview-find "
+.SH NAME
+rosregview\-find \- Search the key hierarchy for keys with names matching `\-n` (substring, repeatable, any\-of, case\-insensitive by default) and/or values whose name+decoded\-data contains `\-v`. With no filters, this enumerates every key path up to `\-\-max\-depth`
+.SH SYNOPSIS
+\fBrosregview find\fR [\fB\-n\fR|\fB\-\-name\fR] [\fB\-v\fR|\fB\-\-value\fR] [\fB\-\-case\-sensitive\fR] [\fB\-\-max\-depth\fR] [\fB\-f\fR|\fB\-\-format\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIPATH\fR>
+.SH DESCRIPTION
+Search the key hierarchy for keys with names matching `\-n` (substring, repeatable, any\-of, case\-insensitive by default) and/or values whose name+decoded\-data contains `\-v`. With no filters, this enumerates every key path up to `\-\-max\-depth`
+.SH OPTIONS
+.TP
+\fB\-n\fR, \fB\-\-name\fR \fI<PATTERN>\fR
+Substring to match in key names. Repeat to OR multiple patterns
+.TP
+\fB\-v\fR, \fB\-\-value\fR \fI<PATTERN>\fR
+Substring to match in value name + decoded data (any value within a matching key whose name/data contains the pattern)
+.TP
+\fB\-\-case\-sensitive\fR
+Match case\-sensitively. Default: case\-insensitive
+.TP
+\fB\-\-max\-depth\fR \fI<N>\fR
+Limit recursion depth. 0 = root only, 1 = root + direct children, ... Default: unlimited
+.TP
+\fB\-f\fR, \fB\-\-format\fR \fI<FORMAT>\fR [default: human]
+Output format (`human` is a path list, `json` is machine\-readable)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+human
+.IP \(bu 2
+json
+.RE
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIPATH\fR>
+Path to a .hiv file (Windows registry configuration unit)

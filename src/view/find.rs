@@ -4,13 +4,17 @@ use crate::cli::OutputFormat;
 use crate::error;
 use crate::hive::open;
 use crate::output::{
-    Stats,
+    Stats, escape_control_chars,
     value::{format_value_data, reg_type_label},
+    write_stdout,
 };
 use anyhow::Result;
 use nt_hive::KeyNode;
 use serde::Serialize;
 use std::path::Path;
+
+const MAX_TRAVERSAL_DEPTH: usize = 512;
+const MAX_SCANNED_KEYS: usize = 1_000_000;
 
 /// Public entry point for the `find` subcommand.
 #[allow(clippy::too_many_arguments)]
@@ -22,36 +26,34 @@ pub fn run(
     max_depth: Option<usize>,
     format: OutputFormat,
 ) -> Result<()> {
-    let (hive, file_size) = open::load_hive(path)?;
-    let root = hive
-        .root_key_node()
-        .map_err(|e| error::wrap_hive_error(e, "hive has no root key node"))?;
-
     let patterns = FindPatterns {
         name: name.to_vec(),
         value: value.map(|s| s.to_string()),
         case_sensitive,
     };
-
-    let mut matches = Vec::new();
-    let mut total_keys: usize = 0;
-    walk_for_matches(
-        &root,
-        "<root>",
-        0,
-        max_depth,
-        &patterns,
-        &mut matches,
-        &mut total_keys,
-    )?;
-
-    let stats = FindStats {
-        base: Stats::from_hive(path, file_size, hive.minor_version()),
-        patterns,
-        max_depth,
-        matches,
-        total_keys,
-    };
+    let stats = open::with_hive(path, |hive, file_size| {
+        let root = hive
+            .root_key_node()
+            .map_err(|e| error::wrap_hive_error(e, "hive has no root key node"))?;
+        let mut matches = Vec::new();
+        let mut total_keys = 0;
+        walk_for_matches(
+            &root,
+            "<root>",
+            0,
+            max_depth,
+            &patterns,
+            &mut matches,
+            &mut total_keys,
+        )?;
+        Ok(FindStats {
+            base: Stats::from_hive(path, file_size, hive.minor_version()),
+            patterns,
+            max_depth,
+            matches,
+            total_keys,
+        })
+    })?;
 
     match format {
         OutputFormat::Human => render_human(&stats),
@@ -96,8 +98,9 @@ struct FindPatterns {
 impl FindPatterns {
     fn matches_name(&self, haystack: &str) -> bool {
         if self.name.is_empty() {
-            // No name filter → any name passes.
-            return true;
+            // With no filters, find enumerates every key. A value-only
+            // search must not let the absent name filter match every key.
+            return self.value.is_none();
         }
         self.name
             .iter()
@@ -172,6 +175,14 @@ fn walk_for_matches<'a>(
     out: &mut Vec<KeyMatch>,
     total_keys: &mut usize,
 ) -> Result<()> {
+    if depth > MAX_TRAVERSAL_DEPTH {
+        anyhow::bail!(
+            "registry key nesting exceeds the safety limit of {MAX_TRAVERSAL_DEPTH} levels"
+        );
+    }
+    if *total_keys >= MAX_SCANNED_KEYS {
+        anyhow::bail!("registry contains more than {MAX_SCANNED_KEYS} keys");
+    }
     *total_keys += 1;
 
     let name = node
@@ -191,38 +202,39 @@ fn walk_for_matches<'a>(
         match node.values() {
             Some(Ok(iter)) => {
                 for val_result in iter {
-                    let val = match val_result {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
-                    let val_name = match val.name() {
-                        Ok(n) => n.to_string_lossy(),
-                        Err(_) => continue,
-                    };
+                    let val = val_result.map_err(|e| {
+                        error::wrap_hive_error(e, "failed to advance value iterator during find")
+                    })?;
+                    let val_name = val
+                        .name()
+                        .map_err(|e| error::wrap_hive_error(e, "failed to read value name"))?
+                        .to_string_lossy();
                     let reg_type = match val.data_type() {
                         Ok(t) => reg_type_label(t).to_string(),
                         Err(_) => "REG_UNKNOWN".to_string(),
                     };
-                    let (data_human, _) = format_value_data(&val, &reg_type);
+                    let formatted = match format_value_data(&val, &reg_type, false) {
+                        Ok(data) => data,
+                        Err(e) => {
+                            eprintln!(
+                                "rosregview: warning: failed to decode value `{val_name}` at `{path_label}`: {e}"
+                            );
+                            continue;
+                        }
+                    };
 
-                    if patterns.matches_value(&val_name) || patterns.matches_value(&data_human) {
+                    if patterns.matches_value(&val_name)
+                        || patterns.matches_value(&formatted.search)
+                    {
                         matched_values.push(ValueMatchHint {
                             name: val_name,
                             reg_type,
-                            preview: data_human,
+                            preview: formatted.human,
                         });
                     }
                 }
             }
-            Some(Err(_)) => {
-                // Malformed value list — warn so the user understands
-                // why `-v` produced no matches at this key. find stays
-                // best-effort (does not abort), consistent with its
-                // tolerant handling of per-value errors above.
-                eprintln!(
-                    "rosregview: warning: malformed value list at `{path_label}` — value search skipped here"
-                );
-            }
+            Some(Err(e)) => return Err(error::wrap_hive_error(e, "malformed value list")),
             None => {} // No value list on this key — normal for leaf keys.
         }
     }
@@ -247,70 +259,85 @@ fn walk_for_matches<'a>(
         return Ok(());
     }
 
-    if let Some(Ok(iter)) = node.subkeys() {
-        for child_result in iter {
-            let child = match child_result {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            let child_name = match child.name() {
-                Ok(n) => n.to_string_lossy(),
-                Err(_) => continue,
-            };
-            let child_path = if path_label == "<root>" {
-                child_name.clone()
-            } else {
-                format!("{path_label}\\{child_name}")
-            };
-            walk_for_matches(
-                &child,
-                &child_path,
-                depth + 1,
-                depth_limit,
-                patterns,
-                out,
-                total_keys,
-            )?;
+    match node.subkeys() {
+        Some(Ok(iter)) => {
+            for child_result in iter {
+                let child = child_result.map_err(|e| {
+                    error::wrap_hive_error(e, "failed to advance subkey iterator during find")
+                })?;
+                let child_name = child
+                    .name()
+                    .map_err(|e| error::wrap_hive_error(e, "failed to read subkey name"))?
+                    .to_string_lossy();
+                let child_path = if path_label == "<root>" {
+                    child_name.clone()
+                } else {
+                    format!("{path_label}\\{child_name}")
+                };
+                walk_for_matches(
+                    &child,
+                    &child_path,
+                    depth + 1,
+                    depth_limit,
+                    patterns,
+                    out,
+                    total_keys,
+                )?;
+            }
         }
+        Some(Err(e)) => return Err(error::wrap_hive_error(e, "malformed subkey index")),
+        None => {}
     }
 
     Ok(())
 }
 
 fn render_human(stats: &FindStats) -> Result<()> {
-    println!("File:     {}", stats.base.path);
-    println!(
-        "Patterns: name~={:?}  value~={:?}  case_sensitive={}",
-        stats.patterns.name, stats.patterns.value, stats.patterns.case_sensitive
-    );
-    if let Some(limit) = stats.max_depth {
-        println!("Max depth: {limit}");
-    } else {
-        println!("Max depth: unlimited");
-    }
-    println!(
-        "Scanned {} keys, matched {} key(s).",
-        stats.total_keys,
-        stats.matches.len()
-    );
-
-    if stats.matches.is_empty() {
-        return Ok(());
-    }
-    println!();
-    for m in &stats.matches {
-        let indent = "  ".repeat(m.depth);
-        println!("{indent}{}", m.key_path);
-        for v in &m.matched_values {
-            println!("{}    • {}: {} = {}", indent, v.name, v.reg_type, v.preview);
+    write_stdout(|out| {
+        writeln!(out, "File:     {}", escape_control_chars(&stats.base.path))?;
+        writeln!(
+            out,
+            "Patterns: name~={:?}  value~={:?}  case_sensitive={}",
+            stats.patterns.name, stats.patterns.value, stats.patterns.case_sensitive
+        )?;
+        if let Some(limit) = stats.max_depth {
+            writeln!(out, "Max depth: {limit}")?;
+        } else {
+            writeln!(out, "Max depth: unlimited")?;
         }
-    }
-    Ok(())
+        writeln!(
+            out,
+            "Scanned {} keys, matched {} key(s).",
+            stats.total_keys,
+            stats.matches.len()
+        )?;
+        if !stats.matches.is_empty() {
+            writeln!(out)?;
+        }
+        for m in &stats.matches {
+            let indent = "  ".repeat(m.depth);
+            writeln!(out, "{indent}{}", escape_control_chars(&m.key_path))?;
+            for v in &m.matched_values {
+                writeln!(
+                    out,
+                    "{}    • {}: {} = {}",
+                    indent,
+                    escape_control_chars(&v.name),
+                    v.reg_type,
+                    escape_control_chars(&v.preview)
+                )?;
+            }
+        }
+        Ok(())
+    })
 }
 
 fn render_json(stats: &FindStats) -> Result<()> {
-    println!("{}", serde_json::to_string_pretty(stats)?);
-    Ok(())
+    let json = serde_json::to_string_pretty(stats)?;
+    write_stdout(|out| {
+        writeln!(out, "{json}")?;
+        Ok(())
+    })
 }
 
 #[cfg(test)]
@@ -339,10 +366,19 @@ mod tests {
     }
 
     #[test]
-    fn find_patterns_empty_name_filter_accepts_every_name() {
+    fn find_patterns_without_filters_accepts_every_name() {
         let p = FindPatterns::default();
         assert!(p.matches_name("anything"));
         assert!(p.matches_name(""));
+    }
+
+    #[test]
+    fn find_patterns_value_only_filter_does_not_match_names() {
+        let p = FindPatterns {
+            value: Some("42".to_string()),
+            ..Default::default()
+        };
+        assert!(!p.matches_name("anything"));
     }
 
     #[test]

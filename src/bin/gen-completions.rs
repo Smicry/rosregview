@@ -13,7 +13,7 @@
 //!   completions/_rosregview        (zsh)
 //!   completions/rosregview.fish
 //!   completions/_rosregview.ps1    (PowerShell)
-//!   man/rosregview.1
+//!   man/rosregview*.1
 //!
 //! `completions/` and `man/` are subdirectories under `--outdir`; the
 //! helper creates them if missing. The script exits 0 on success and
@@ -47,12 +47,34 @@ fn main() -> anyhow::Result<()> {
         println!("  wrote {}", path.display());
     }
 
-    let man = Man::new(cmd);
+    let subcommands: Vec<_> = cmd.get_subcommands().cloned().collect();
     let man_path = man_dir.join(format!("{bin_name}.1"));
-    let mut file = std::fs::File::create(&man_path)?;
-    man.render(&mut file)?;
+    render_man(cmd, &man_path)?;
     println!("  wrote {}", man_path.display());
+    for subcommand in subcommands {
+        let page_name = format!("{bin_name}-{}", subcommand.get_name());
+        let path = man_dir.join(format!("{page_name}.1"));
+        // clap stores command names as static strings unless its optional
+        // `string` feature is enabled. This short-lived generator owns only
+        // one tiny allocation per subcommand, so promoting them is harmless.
+        let command_name: &'static str = Box::leak(page_name.into_boxed_str());
+        render_man(subcommand.name(command_name), &path)?;
+        println!("  wrote {}", path.display());
+    }
 
+    Ok(())
+}
+
+fn render_man(command: clap::Command, path: &Path) -> anyhow::Result<()> {
+    let mut rendered = Vec::new();
+    Man::new(command).render(&mut rendered)?;
+    let rendered = String::from_utf8(rendered)?;
+    let normalized = rendered
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(path, format!("{normalized}\n"))?;
     Ok(())
 }
 
@@ -99,6 +121,6 @@ OUTPUT:
     <outdir>/completions/_rosregview          (zsh)
     <outdir>/completions/rosregview.fish
     <outdir>/completions/_rosregview.ps1      (PowerShell)
-    <outdir>/man/rosregview.1"
+    <outdir>/man/rosregview*.1"
     );
 }

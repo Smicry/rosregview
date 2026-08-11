@@ -1,0 +1,32 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH rosregview-list 1  "rosregview-list "
+.SH NAME
+rosregview\-list \- List the direct subkeys of a key (default: the root), with subkey and value counts. The optional `KEY_PATH` may be a single segment (`ControlSet001`) or a backslash\-separated subpath (`A\\B\\C`). Empty path == the root
+.SH SYNOPSIS
+\fBrosregview list\fR [\fB\-f\fR|\fB\-\-format\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIPATH\fR> [\fIKEY_PATH\fR]
+.SH DESCRIPTION
+List the direct subkeys of a key (default: the root), with subkey and value counts. The optional `KEY_PATH` may be a single segment (`ControlSet001`) or a backslash\-separated subpath (`A\\B\\C`). Empty path == the root
+.SH OPTIONS
+.TP
+\fB\-f\fR, \fB\-\-format\fR \fI<FORMAT>\fR [default: human]
+Output format (`human` is an aligned table, `json` is machine\-readable)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+human
+.IP \(bu 2
+json
+.RE
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIPATH\fR>
+Path to a .hiv file (Windows registry configuration unit)
+.TP
+[\fIKEY_PATH\fR]
+Optional key path inside the hive. Use `\\` (escaped as `\\\\` in most shells) to separate levels. Empty/missing → hive root

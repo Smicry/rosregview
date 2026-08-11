@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [master, feature/**]
+    branches: ['**']
   pull_request:
     branches: [master]
   workflow_dispatch:
@@ -15,9 +15,12 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
 jobs:
   # ----------------------------------------------------------------------
-  # Native build + integration tests on the three primary platforms.
+  # Native build + all tests on the three primary platforms.
   # ----------------------------------------------------------------------
   test:
     name: native / ${{ matrix.os }} / ${{ matrix.profile }}
@@ -62,8 +65,8 @@ jobs:
         shell: bash
         run: ./target/${{ matrix.profile }}/rosregview info testdata/testhive
 
-      - name: Integration tests
-        run: cargo test --${{ matrix.profile }} --test integration --locked --verbose
+      - name: Unit and integration tests
+        run: cargo test --${{ matrix.profile }} --locked --verbose
 
       - name: Upload native binary
         uses: actions/upload-artifact@v7
@@ -73,6 +76,16 @@ jobs:
             target/${{ matrix.profile }}/rosregview
             target/${{ matrix.profile }}/rosregview.exe
           if-no-files-found: ignore
+
+  msrv:
+    name: msrv / Rust 1.94.0
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install minimum supported Rust
+        uses: dtolnay/rust-toolchain@1.94.0
+      - name: Test on MSRV
+        run: cargo test --locked
 
   # ----------------------------------------------------------------------
   # Cross-compile i686-pc-windows-gnu via Zig. Lives on its own job so
@@ -101,18 +114,20 @@ jobs:
           # (NOT `zig-linux-x86_64-<ver>.tar.xz`); see
           # https://ziglang.org/download/index.json for the current matrix.
           ZIG_VERSION: "0.16.0"
+          ZIG_SHA256: "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
         run: |
           set -euxo pipefail
-          curl -fsSL \
-            "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" \
-            | sudo tar -xJ -C /usr/local
+          curl -fsSL -o /tmp/zig.tar.xz \
+            "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          echo "${ZIG_SHA256}  /tmp/zig.tar.xz" | sha256sum --check
+          sudo tar -xJf /tmp/zig.tar.xz -C /usr/local
           sudo ln -sf \
             "/usr/local/zig-x86_64-linux-${ZIG_VERSION}/zig" \
             /usr/local/bin/zig
           zig version
 
       - name: Install cargo-zigbuild
-        run: cargo install cargo-zigbuild --locked
+        run: cargo install cargo-zigbuild --version 0.23.0 --locked
 
       - name: Cross-compile
         # cargo-zigbuild 0.23 locates zig via `which zig` only — it has no
@@ -124,7 +139,7 @@ jobs:
         # The test inspects target/i686-pc-windows-gnu/release/rosregview.exe
         # and asserts valid MZ + PE\0\0 + i386 machine + Windows CUI subsystem.
         # We force `--release` here so the test looks in the release dir.
-        run: cargo test --release --test integration windows_exe_artifact_is_valid_pe32_when_present -- --nocapture
+        run: cargo test --release --locked --test integration windows_exe_artifact_is_valid_pe32_when_present -- --nocapture
 
       - name: Upload Windows .exe
         uses: actions/upload-artifact@v7
@@ -164,7 +179,7 @@ jobs:
         # -- --outdir .` and commit the result.
         run: |
           set -euxo pipefail
-          cargo run --quiet --bin gen-completions -- --outdir generated-tmp
+          cargo run --quiet --locked --bin gen-completions -- --outdir generated-tmp
           diff -ruN completions/ generated-tmp/completions/ > completions.diff || true
           diff -ruN man/         generated-tmp/man/         > man.diff         || true
           if [ -s completions.diff ] || [ -s man.diff ]; then

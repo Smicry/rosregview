@@ -10,5 +10,14 @@
 use anyhow::Result;
 
 fn main() -> Result<()> {
-    rosregview::run()
+    match rosregview::run() {
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|e| e.kind() == std::io::ErrorKind::BrokenPipe) =>
+        {
+            Ok(())
+        }
+        result => result,
+    }
 }

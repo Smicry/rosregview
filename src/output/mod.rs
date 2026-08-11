@@ -18,6 +18,30 @@ pub mod hex;
 pub(crate) mod value;
 
 use serde::Serialize;
+use std::io::{BufWriter, Write};
+
+/// Write a complete response through a locked, buffered stdout and propagate
+/// I/O failures so the binary can handle broken pipes without panicking.
+pub fn write_stdout(f: impl FnOnce(&mut dyn Write) -> anyhow::Result<()>) -> anyhow::Result<()> {
+    let stdout = std::io::stdout();
+    let mut writer = BufWriter::new(stdout.lock());
+    f(&mut writer)?;
+    writer.flush()?;
+    Ok(())
+}
+
+/// Escape terminal control characters while preserving printable Unicode.
+pub fn escape_control_chars(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for c in value.chars() {
+        if c.is_control() {
+            escaped.extend(c.escape_default());
+        } else {
+            escaped.push(c);
+        }
+    }
+    escaped
+}
 
 /// File-level (hive-wide) facts that every subcommand's JSON output
 /// shares under the same top-level keys (`path`, `file_size_bytes`,
@@ -121,5 +145,13 @@ mod tests {
     fn truncate_max_chars_zero_yields_only_ellipsis() {
         // saturating_sub gives 0; we still emit the ellipsis sentinel.
         assert_eq!(truncate_with_ellipsis("anything", 0), "…");
+    }
+
+    #[test]
+    fn escape_control_chars_preserves_text_and_escapes_controls() {
+        assert_eq!(
+            escape_control_chars("ok\n\u{1b}[31m雪"),
+            "ok\\n\\u{1b}[31m雪"
+        );
     }
 }

@@ -3,7 +3,7 @@
 use crate::cli::OutputFormat;
 use crate::error;
 use crate::hive::open;
-use crate::output::Stats;
+use crate::output::{Stats, escape_control_chars, write_stdout};
 use anyhow::Result;
 use nt_hive::Hive;
 use serde::Serialize;
@@ -11,22 +11,33 @@ use std::path::Path;
 
 /// Public entry point for the `info` subcommand.
 pub fn run(path: &Path, format: OutputFormat) -> Result<()> {
-    let (hive, file_size) = open::load_hive(path)?;
-    let subkey_count = count_root_subkeys(&hive)?;
-
-    let stats = Stats::from_hive(path, file_size, hive.minor_version());
+    let (stats, subkey_count) = open::with_hive(path, |hive, file_size| {
+        Ok((
+            Stats::from_hive(path, file_size, hive.minor_version()),
+            count_root_subkeys(hive)?,
+        ))
+    })?;
     match format {
         OutputFormat::Human => render_human(&stats, subkey_count),
         OutputFormat::Json => render_json(&stats, subkey_count),
     }
 }
 
-fn count_root_subkeys(hive: &Hive<&'static [u8]>) -> Result<usize> {
+fn count_root_subkeys(hive: &Hive<&[u8]>) -> Result<usize> {
     let root = hive
         .root_key_node()
         .map_err(|e| error::wrap_hive_error(e, "hive has no readable root key node"))?;
     let count = match root.subkeys() {
-        Some(Ok(iter)) => iter.count(),
+        Some(Ok(iter)) => {
+            let mut count = 0;
+            for child in iter {
+                child.map_err(|e| {
+                    error::wrap_hive_error(e, "failed to advance root subkey iterator")
+                })?;
+                count += 1;
+            }
+            count
+        }
         Some(Err(e)) => {
             return Err(error::wrap_hive_error_owned(
                 e,
@@ -46,14 +57,17 @@ struct InfoPayload {
 }
 
 fn render_human(stats: &Stats, subkey_count: usize) -> Result<()> {
-    println!("File:           {}", stats.path);
-    println!("Size:           {} bytes", stats.file_size_bytes);
-    println!(
-        "Parsed:         OK (nt-hive 0.3, minor version {})",
-        stats.minor_version
-    );
-    println!("Root subkeys:   {subkey_count}");
-    Ok(())
+    write_stdout(|out| {
+        writeln!(out, "File:           {}", escape_control_chars(&stats.path))?;
+        writeln!(out, "Size:           {} bytes", stats.file_size_bytes)?;
+        writeln!(
+            out,
+            "Parsed:         OK (nt-hive 0.3, minor version {})",
+            stats.minor_version
+        )?;
+        writeln!(out, "Root subkeys:   {subkey_count}")?;
+        Ok(())
+    })
 }
 
 fn render_json(stats: &Stats, subkey_count: usize) -> Result<()> {
@@ -65,8 +79,11 @@ fn render_json(stats: &Stats, subkey_count: usize) -> Result<()> {
         },
         root_subkey_count: subkey_count,
     };
-    println!("{}", serde_json::to_string_pretty(&payload)?);
-    Ok(())
+    let json = serde_json::to_string_pretty(&payload)?;
+    write_stdout(|out| {
+        writeln!(out, "{json}")?;
+        Ok(())
+    })
 }
 
 #[cfg(test)]
@@ -87,9 +104,11 @@ mod tests {
             eprintln!("skipping: {} not found", p.display());
             return;
         }
-        // Use the public `load_hive` helper to get a 'static Hive.
-        let (hive, _size) = open::load_hive(&p).unwrap();
-        // The bundled nt-hive test fixture has exactly 5 root subkeys.
-        assert_eq!(count_root_subkeys(&hive).unwrap(), 5);
+        // Parse through the same scoped helper used by production commands.
+        open::with_hive(&p, |hive, _size| {
+            assert_eq!(count_root_subkeys(hive).unwrap(), 5);
+            Ok(())
+        })
+        .unwrap();
     }
 }

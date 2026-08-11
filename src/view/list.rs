@@ -3,7 +3,7 @@
 use crate::cli::OutputFormat;
 use crate::error;
 use crate::hive::{format, open};
-use crate::output::{Stats, truncate_with_ellipsis};
+use crate::output::{Stats, escape_control_chars, truncate_with_ellipsis, write_stdout};
 use anyhow::Result;
 use nt_hive::KeyNode;
 use serde::Serialize;
@@ -11,28 +11,26 @@ use std::path::Path;
 
 /// Public entry point for the `list` subcommand.
 pub fn run(path: &Path, key_path: Option<&str>, format_flag: OutputFormat) -> Result<()> {
-    let (hive, file_size) = open::load_hive(path)?;
-    let root = hive
-        .root_key_node()
-        .map_err(|e| error::wrap_hive_error(e, "hive has no root key node"))?;
-
-    let target = match key_path {
-        None | Some("") | Some(".") => root,
-        Some(p) => format::find_subpath(&root, p)?,
-    };
     let target_name: &str = match key_path {
         None | Some("") | Some(".") => "<root>",
         Some(p) => p,
     };
-
-    let entries = collect_entries(&target)?;
-
-    let stats = ListStats {
-        base: Stats::from_hive(path, file_size, hive.minor_version()),
-        at: target_name.to_string(),
-        total_entries: entries.len(),
-        entries,
-    };
+    let stats = open::with_hive(path, |hive, file_size| {
+        let root = hive
+            .root_key_node()
+            .map_err(|e| error::wrap_hive_error(e, "hive has no root key node"))?;
+        let target = match key_path {
+            None | Some("") | Some(".") => root,
+            Some(p) => format::find_subpath(&root, p)?,
+        };
+        let entries = collect_entries(&target)?;
+        Ok(ListStats {
+            base: Stats::from_hive(path, file_size, hive.minor_version()),
+            at: target_name.to_string(),
+            total_entries: entries.len(),
+            entries,
+        })
+    })?;
 
     match format_flag {
         OutputFormat::Human => render_human(&stats),
@@ -86,12 +84,28 @@ fn collect_entries<'a>(target: &KeyNode<'a, &'a [u8]>) -> Result<Vec<ListEntry>>
             .to_string_lossy();
 
         let subkey_count = match child.subkeys() {
-            Some(Ok(iter)) => iter.count(),
-            _ => 0,
+            Some(Ok(iter)) => {
+                let mut count = 0;
+                for item in iter {
+                    item.map_err(|e| error::wrap_hive_error(e, "failed to count subkeys"))?;
+                    count += 1;
+                }
+                count
+            }
+            Some(Err(e)) => return Err(error::wrap_hive_error(e, "malformed subkey index")),
+            None => 0,
         };
         let value_count = match child.values() {
-            Some(Ok(iter)) => iter.count(),
-            _ => 0,
+            Some(Ok(iter)) => {
+                let mut count = 0;
+                for item in iter {
+                    item.map_err(|e| error::wrap_hive_error(e, "failed to count values"))?;
+                    count += 1;
+                }
+                count
+            }
+            Some(Err(e)) => return Err(error::wrap_hive_error(e, "malformed value list")),
+            None => 0,
         };
 
         out.push(ListEntry {
@@ -104,28 +118,32 @@ fn collect_entries<'a>(target: &KeyNode<'a, &'a [u8]>) -> Result<Vec<ListEntry>>
 }
 
 fn render_human(stats: &ListStats) -> Result<()> {
-    println!("File:    {}", stats.base.path);
-    println!("At:      {}", stats.at);
-    println!();
-
-    // Use a fixed-width header for predictability across hive shapes.
-    println!("{:<40}  {:>8}  {:>8}", "Name", "Subkeys", "Values");
-    println!("{}", "─".repeat(60));
-    for entry in &stats.entries {
-        let display_name = truncate_with_ellipsis(&entry.name, 40);
-        println!(
-            "{:<40}  {:>8}  {:>8}",
-            display_name, entry.subkey_count, entry.value_count
-        );
-    }
-    println!();
-    println!("Total: {} keys", stats.total_entries);
-    Ok(())
+    write_stdout(|out| {
+        writeln!(out, "File:    {}", escape_control_chars(&stats.base.path))?;
+        writeln!(out, "At:      {}", escape_control_chars(&stats.at))?;
+        writeln!(out)?;
+        writeln!(out, "{:<40}  {:>8}  {:>8}", "Name", "Subkeys", "Values")?;
+        writeln!(out, "{}", "─".repeat(60))?;
+        for entry in &stats.entries {
+            let display_name = truncate_with_ellipsis(&escape_control_chars(&entry.name), 40);
+            writeln!(
+                out,
+                "{:<40}  {:>8}  {:>8}",
+                display_name, entry.subkey_count, entry.value_count
+            )?;
+        }
+        writeln!(out)?;
+        writeln!(out, "Total: {} keys", stats.total_entries)?;
+        Ok(())
+    })
 }
 
 fn render_json(stats: &ListStats) -> Result<()> {
-    println!("{}", serde_json::to_string_pretty(stats)?);
-    Ok(())
+    let json = serde_json::to_string_pretty(stats)?;
+    write_stdout(|out| {
+        writeln!(out, "{json}")?;
+        Ok(())
+    })
 }
 
 #[cfg(test)]
@@ -146,16 +164,16 @@ mod tests {
             eprintln!("skipping: {} not found", p.display());
             return;
         }
-        let (hive, _size) = open::load_hive(&p).unwrap();
-        let root = hive.root_key_node().unwrap();
-        let entries = collect_entries(&root).unwrap();
-        assert_eq!(entries.len(), 5);
-        for e in &entries {
-            // Every entry must have a non-empty name and at least one of
-            // (subkey_count, value_count) > 0 — the fixture has subkeys
-            // but no values at root level.
-            assert!(!e.name.is_empty(), "entry has empty name: {e:?}");
-        }
+        open::with_hive(&p, |hive, _size| {
+            let root = hive.root_key_node().unwrap();
+            let entries = collect_entries(&root).unwrap();
+            assert_eq!(entries.len(), 5);
+            for e in &entries {
+                assert!(!e.name.is_empty(), "entry has empty name: {e:?}");
+            }
+            Ok(())
+        })
+        .unwrap();
     }
 
     #[test]
@@ -165,13 +183,15 @@ mod tests {
             eprintln!("skipping: {} not found", p.display());
             return;
         }
-        let (hive, _size) = open::load_hive(&p).unwrap();
-        let root = hive.root_key_node().unwrap();
-        // Verify find_subpath errors rather than panicking.
-        let err = match format::find_subpath(&root, "definitely-missing") {
-            Ok(_) => panic!("missing subpath must error"),
-            Err(e) => e,
-        };
-        assert!(err.to_string().contains("no such key path"));
+        open::with_hive(&p, |hive, _size| {
+            let root = hive.root_key_node().unwrap();
+            let err = match format::find_subpath(&root, "definitely-missing") {
+                Ok(_) => panic!("missing subpath must error"),
+                Err(e) => e,
+            };
+            assert!(err.to_string().contains("no such key path"));
+            Ok(())
+        })
+        .unwrap();
     }
 }

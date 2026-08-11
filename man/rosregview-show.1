@@ -1,0 +1,32 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH rosregview-show 1  "rosregview-show "
+.SH NAME
+rosregview\-show \- Show the values of a key (default: the root). Per\-value output includes the value name, its REG_* type, and the data, decoded according to the type where possible (UTF\-16 strings, u32 little\- endian dwords, u64 little\-endian qwords, ...). Binary data is shown as a hex dump; long strings are truncated with a trailing `…`
+.SH SYNOPSIS
+\fBrosregview show\fR [\fB\-f\fR|\fB\-\-format\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIPATH\fR> [\fIKEY_PATH\fR]
+.SH DESCRIPTION
+Show the values of a key (default: the root). Per\-value output includes the value name, its REG_* type, and the data, decoded according to the type where possible (UTF\-16 strings, u32 little\- endian dwords, u64 little\-endian qwords, ...). Binary data is shown as a hex dump; long strings are truncated with a trailing `…`
+.SH OPTIONS
+.TP
+\fB\-f\fR, \fB\-\-format\fR \fI<FORMAT>\fR [default: human]
+Output format (`human` is a typed table, `json` is machine\-readable)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+human
+.IP \(bu 2
+json
+.RE
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIPATH\fR>
+Path to a .hiv file (Windows registry configuration unit)
+.TP
+[\fIKEY_PATH\fR]
+Optional key path inside the hive (same convention as `list`)
